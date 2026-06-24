@@ -1,17 +1,19 @@
-import {
-  memo,
-  useCallback,
-  useState,
-} from 'react'
-import { useTranslation } from 'react-i18next'
-import { RiArrowDownSLine } from '@remixicon/react'
-import Button from '@/app/components/base/button'
-import Indicator from '@/app/components/header/indicator'
-import cn from '@/utils/classnames'
+import type { StatusDotStatus } from '@langgenius/dify-ui/status-dot'
 import type {
   Credential,
   PluginPayload,
 } from './types'
+import { Button } from '@langgenius/dify-ui/button'
+import { cn } from '@langgenius/dify-ui/cn'
+import { StatusDot } from '@langgenius/dify-ui/status-dot'
+import { RiArrowDownSLine } from '@remixicon/react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useState,
+} from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   Authorized,
   usePluginAuth,
@@ -21,11 +23,13 @@ type AuthorizedInNodeProps = {
   pluginPayload: PluginPayload
   onAuthorizationItemClick: (id: string) => void
   credentialId?: string
+  onDefaultCredentialChange?: (id?: string) => void
 }
 const AuthorizedInNode = ({
   pluginPayload,
   onAuthorizationItemClick,
   credentialId,
+  onDefaultCredentialChange,
 }: AuthorizedInNodeProps) => {
   const { t } = useTranslation()
   const [isOpen, setIsOpen] = useState(false)
@@ -33,62 +37,67 @@ const AuthorizedInNode = ({
     canApiKey,
     canOAuth,
     credentials,
-    disabled,
     invalidPluginCredentialInfo,
     notAllowCustomCredential,
-  } = usePluginAuth(pluginPayload, true)
+  } = usePluginAuth(pluginPayload, true, credentialId ? [credentialId] : undefined)
+  const defaultCredentialId = credentials.find(c => c.is_default)?.id
+
+  useEffect(() => {
+    onDefaultCredentialChange?.(defaultCredentialId)
+  }, [defaultCredentialId, onDefaultCredentialChange])
+
   const renderTrigger = useCallback((open?: boolean) => {
     let label = ''
     let removed = false
     let unavailable = false
-    let color = 'green'
+    let color: StatusDotStatus = 'success'
     let defaultUnavailable = false
     if (!credentialId) {
-      label = t('plugin.auth.workspaceDefault')
+      label = t('auth.workspaceDefault', { ns: 'plugin' })
 
       const defaultCredential = credentials.find(c => c.is_default)
 
       if (defaultCredential?.not_allowed_to_use) {
-        color = 'gray'
+        color = 'disabled'
         defaultUnavailable = true
       }
     }
     else {
       const credential = credentials.find(c => c.id === credentialId)
-      label = credential ? credential.name : t('plugin.auth.authRemoved')
+      label = credential ? credential.name : t('auth.authRemoved', { ns: 'plugin' })
       removed = !credential
       unavailable = !!credential?.not_allowed_to_use && !credential?.from_enterprise
 
       if (removed)
-        color = 'red'
+        color = 'error'
       else if (unavailable)
-        color = 'gray'
+        color = 'disabled'
     }
     return (
       <Button
-        size='small'
+        size="small"
         className={cn(
           open && !removed && 'bg-components-button-ghost-bg-hover',
           removed && 'bg-transparent text-text-destructive',
         )}
         variant={(defaultUnavailable || unavailable) ? 'ghost' : 'secondary'}
       >
-        <Indicator
-          className='mr-1.5'
-          color={color as any}
+        <StatusDot
+          className="mr-1.5"
+          status={color}
         />
         {label}
         {
           (unavailable || defaultUnavailable) && (
             <>
               &nbsp;
-              {t('plugin.auth.unavailable')}
+              {t('auth.unavailable', { ns: 'plugin' })}
             </>
           )
         }
         <RiArrowDownSLine
           className={cn(
-            'h-3.5 w-3.5 text-components-button-ghost-text',
+            'size-3.5 text-components-button-ghost-text',
             removed && 'text-text-destructive',
           )}
         />
@@ -99,7 +108,7 @@ const AuthorizedInNode = ({
   const extraAuthorizationItems: Credential[] = [
     {
       id: '__workspace_default__',
-      name: t('plugin.auth.workspaceDefault'),
+      name: t('auth.workspaceDefault', { ns: 'plugin' }),
       provider: '',
       is_default: !credentialId,
       isWorkspaceDefault: true,
@@ -107,9 +116,15 @@ const AuthorizedInNode = ({
     },
   ]
   const handleAuthorizationItemClick = useCallback((id: string) => {
-    onAuthorizationItemClick(id)
+    onAuthorizationItemClick(
+      id === '__workspace_default__' && onDefaultCredentialChange
+        ? defaultCredentialId || id
+        : id,
+    )
     setIsOpen(false)
   }, [
+    defaultCredentialId,
+    onDefaultCredentialChange,
     onAuthorizationItemClick,
     setIsOpen,
   ])
@@ -124,10 +139,9 @@ const AuthorizedInNode = ({
       isOpen={isOpen}
       onOpenChange={setIsOpen}
       offset={4}
-      placement='bottom-end'
+      placement="bottom-end"
       triggerPopupSameWidth={false}
-      popupClassName='w-[360px]'
-      disabled={disabled}
+      popupClassName="w-[360px]"
       disableSetDefault
       onItemClick={handleAuthorizationItemClick}
       extraAuthorizationItems={extraAuthorizationItems}

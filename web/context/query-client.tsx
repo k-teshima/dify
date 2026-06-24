@@ -1,23 +1,42 @@
 'use client'
 
-import type { FC, PropsWithChildren } from 'react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
+import type { QueryClient } from '@tanstack/react-query'
+import { QueryClientProvider } from '@tanstack/react-query'
+import { queryClientAtom } from 'jotai-tanstack-query'
+import { useHydrateAtoms } from 'jotai/react/utils'
+import { isServer } from '@/utils/client'
+import { makeQueryClient } from './query-client-server'
 
-const STALE_TIME = 1000 * 60 * 30 // 30 minutes
+let browserQueryClient: QueryClient | undefined
 
-const client = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: STALE_TIME,
-    },
-  },
-})
+function getQueryClient() {
+  if (isServer) {
+    return makeQueryClient()
+  }
+  if (!browserQueryClient)
+    browserQueryClient = makeQueryClient()
+  return browserQueryClient
+}
 
-export const TanstackQueryInitializer: FC<PropsWithChildren> = (props) => {
-  const { children } = props
-  return <QueryClientProvider client={client}>
-    {children}
-    <ReactQueryDevtools initialIsOpen={false} />
-  </QueryClientProvider>
+export const TanstackQueryInitializer = ({ children }: { children: React.ReactNode }) => {
+  const queryClient = getQueryClient()
+  return (
+    <QueryClientProvider client={queryClient}>
+      <HydrateJotaiQueryClient queryClient={queryClient}>
+        {children}
+      </HydrateJotaiQueryClient>
+    </QueryClientProvider>
+  )
+}
+
+function HydrateJotaiQueryClient({
+  children,
+  queryClient,
+}: {
+  children: React.ReactNode
+  queryClient: QueryClient
+}) {
+  useHydrateAtoms(new Map([[queryClientAtom, queryClient]]))
+
+  return children
 }

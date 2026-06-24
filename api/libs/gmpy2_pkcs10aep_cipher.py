@@ -20,15 +20,19 @@
 # ===================================================================
 
 from hashlib import sha1
+from typing import TYPE_CHECKING, cast
 
 import Crypto.Hash.SHA1
 import Crypto.Util.number
-import gmpy2  # type: ignore
+import gmpy2
 from Crypto import Random
 from Crypto.Signature.pss import MGF1
 from Crypto.Util.number import bytes_to_long, ceil_div, long_to_bytes
 from Crypto.Util.py3compat import bord
 from Crypto.Util.strxor import strxor
+
+if TYPE_CHECKING:
+    from Crypto.Signature.pss import HashModule
 
 
 class PKCS1OAepCipher:
@@ -70,7 +74,7 @@ class PKCS1OAepCipher:
         if mgfunc:
             self._mgf = mgfunc
         else:
-            self._mgf = lambda x, y: MGF1(x, y, self._hashObj)
+            self._mgf = lambda x, y: MGF1(x, y, cast("HashModule", self._hashObj))
 
         self._label = bytes(label)
         self._randfunc = randfunc
@@ -136,7 +140,7 @@ class PKCS1OAepCipher:
         # Step 3a (OS2IP)
         em_int = bytes_to_long(em)
         # Step 3b (RSAEP)
-        m_int = gmpy2.powmod(em_int, self._key.e, self._key.n)  # ty: ignore [unresolved-attribute]
+        m_int: int = gmpy2.powmod(em_int, self._key.e, self._key.n)  # type: ignore[attr-defined]
         # Step 3c (I2OSP)
         c = long_to_bytes(m_int, k)
         return c
@@ -169,7 +173,7 @@ class PKCS1OAepCipher:
         ct_int = bytes_to_long(ciphertext)
         # Step 2b (RSADP)
         # m_int = self._key._decrypt(ct_int)
-        m_int = gmpy2.powmod(ct_int, self._key.d, self._key.n)  # ty: ignore [unresolved-attribute]
+        m_int: int = gmpy2.powmod(ct_int, self._key.d, self._key.n)  # type: ignore[attr-defined]
         # Complete step 2c (I2OSP)
         em = long_to_bytes(m_int, k)
         # Step 3a
@@ -191,12 +195,12 @@ class PKCS1OAepCipher:
         # Step 3g
         one_pos = hLen + db[hLen:].find(b"\x01")
         lHash1 = db[:hLen]
-        invalid = bord(y) | int(one_pos < hLen)  # type: ignore
+        invalid = bord(y) | int(one_pos < hLen)  # type: ignore[arg-type]
         hash_compare = strxor(lHash1, lHash)
         for x in hash_compare:
-            invalid |= bord(x)  # type: ignore
+            invalid |= bord(x)  # type: ignore[arg-type]
         for x in db[hLen:one_pos]:
-            invalid |= bord(x)  # type: ignore
+            invalid |= bord(x)  # type: ignore[arg-type]
         if invalid != 0:
             raise ValueError("Incorrect decryption.")
         # Step 4

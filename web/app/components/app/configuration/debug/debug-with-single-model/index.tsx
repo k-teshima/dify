@@ -1,27 +1,27 @@
+import type { InputForm } from '@/app/components/base/chat/chat/type'
+import type { ChatConfig, ChatItem, OnSend } from '@/app/components/base/chat/types'
+import type { FileEntity } from '@/app/components/base/file-uploader/types'
+import { Avatar } from '@langgenius/dify-ui/avatar'
 import { memo, useCallback, useImperativeHandle, useMemo } from 'react'
-import {
-  useConfigFromDebugContext,
-  useFormattingChangedSubscription,
-} from '../hooks'
+import { useStore as useAppStore } from '@/app/components/app/store'
 import Chat from '@/app/components/base/chat/chat'
 import { useChat } from '@/app/components/base/chat/chat/hooks'
+import { getLastAnswer, isValidGeneratedAnswer } from '@/app/components/base/chat/utils'
+import { useFeatures } from '@/app/components/base/features/hooks'
+import { ModelFeatureEnum } from '@/app/components/header/account-setting/model-provider-page/declarations'
+import { useAppContext } from '@/context/app-context'
 import { useDebugConfigurationContext } from '@/context/debug-configuration'
-import type { ChatConfig, ChatItem, ChatItemInTree, OnSend } from '@/app/components/base/chat/types'
 import { useProviderContext } from '@/context/provider-context'
 import {
   fetchConversationMessages,
   fetchSuggestedQuestions,
   stopChatMessageResponding,
 } from '@/service/debug'
-import Avatar from '@/app/components/base/avatar'
-import { useAppContext } from '@/context/app-context'
-import { ModelFeatureEnum } from '@/app/components/header/account-setting/model-provider-page/declarations'
-import { useStore as useAppStore } from '@/app/components/app/store'
-import { useFeatures } from '@/app/components/base/features/hooks'
-import { getLastAnswer, isValidGeneratedAnswer } from '@/app/components/base/chat/utils'
-import type { InputForm } from '@/app/components/base/chat/chat/type'
 import { canFindTool } from '@/utils'
-import type { FileEntity } from '@/app/components/base/file-uploader/types'
+import {
+  useConfigFromDebugContext,
+  useFormattingChangedSubscription,
+} from '../hooks'
 
 type DebugWithSingleModelProps = {
   checkCanSend?: () => boolean
@@ -34,11 +34,13 @@ const DebugWithSingleModel = (
     ref,
     checkCanSend,
   }: DebugWithSingleModelProps & {
-    ref: React.RefObject<DebugWithSingleModelRefType>;
+    ref: React.RefObject<DebugWithSingleModelRefType>
   },
 ) => {
   const { userProfile } = useAppContext()
   const {
+    readonly,
+    canTestAndRun = false,
     modelConfig,
     appId,
     inputs,
@@ -46,6 +48,8 @@ const DebugWithSingleModel = (
     completionParams,
     // isShowVisionConfig,
   } = useDebugConfigurationContext()
+  const debugInputReadonly = !canTestAndRun
+  const canManageAnnotation = !readonly && canTestAndRun
   const { textGenerationModelList } = useProviderContext()
   const features = useFeatures(s => s.features)
   const configTemplate = useConfigFromDebugContext()
@@ -90,6 +94,8 @@ const DebugWithSingleModel = (
   useFormattingChangedSubscription(chatList)
 
   const doSend: OnSend = useCallback((message, files, isRegenerate = false, parentAnswer: ChatItem | null = null) => {
+    if (!canTestAndRun)
+      return
     if (checkCanSend && !checkCanSend())
       return
     const currentProvider = textGenerationModelList.find(item => item.provider === modelConfig.provider)
@@ -124,16 +130,12 @@ const DebugWithSingleModel = (
         onGetSuggestedQuestions: (responseItemId, getAbortController) => fetchSuggestedQuestions(appId, responseItemId, getAbortController),
       },
     )
-  }, [appId, chatList, checkCanSend, completionParams, config, handleSend, inputs, modelConfig.mode, modelConfig.model_id, modelConfig.provider, textGenerationModelList])
+  }, [appId, canTestAndRun, chatList, checkCanSend, completionParams, config, handleSend, inputs, modelConfig.mode, modelConfig.model_id, modelConfig.provider, textGenerationModelList])
 
-  const doRegenerate = useCallback((chatItem: ChatItemInTree, editedQuestion?: { message: string, files?: FileEntity[] }) => {
+  const doRegenerate = useCallback((chatItem: ChatItem, editedQuestion?: { message: string, files?: FileEntity[] }) => {
     const question = editedQuestion ? chatItem : chatList.find(item => item.id === chatItem.parentMessageId)!
     const parentAnswer = chatList.find(item => item.id === question.parentMessageId)
-    doSend(editedQuestion ? editedQuestion.message : question.content,
-      editedQuestion ? editedQuestion.files : question.message_files,
-      true,
-      isValidGeneratedAnswer(parentAnswer) ? parentAnswer : null,
-    )
+    doSend(editedQuestion ? editedQuestion.message : question.content, editedQuestion ? editedQuestion.files : question.message_files, true, isValidGeneratedAnswer(parentAnswer) ? parentAnswer : null)
   }, [chatList, doSend])
 
   const allToolIcons = useMemo(() => {
@@ -154,14 +156,17 @@ const DebugWithSingleModel = (
 
   return (
     <Chat
+      readonly={debugInputReadonly}
       config={config}
       chatList={chatList}
       isResponding={isResponding}
-      chatContainerClassName='px-3 pt-6'
-      chatFooterClassName='px-3 pt-10 pb-0'
+      chatContainerClassName="px-3 pt-6"
+      chatFooterClassName="px-3 pt-10 pb-0"
       showFeatureBar
+      featureBarReadonly={readonly}
       showFileUpload={false}
       onFeatureBarClick={setShowAppConfigureFeaturesModal}
+      inputDisabled={!canTestAndRun}
       suggestedQuestions={suggestedQuestions}
       onSend={doSend}
       inputs={inputs}
@@ -170,11 +175,11 @@ const DebugWithSingleModel = (
       switchSibling={siblingMessageId => setTargetMessageId(siblingMessageId)}
       onStopResponding={handleStop}
       showPromptLog
-      questionIcon={<Avatar avatar={userProfile.avatar_url} name={userProfile.name} size={40} />}
+      questionIcon={<Avatar avatar={userProfile.avatar_url} name={userProfile.name} size="xl" />}
       allToolIcons={allToolIcons}
-      onAnnotationEdited={handleAnnotationEdited}
-      onAnnotationAdded={handleAnnotationAdded}
-      onAnnotationRemoved={handleAnnotationRemoved}
+      onAnnotationEdited={canManageAnnotation ? handleAnnotationEdited : undefined}
+      onAnnotationAdded={canManageAnnotation ? handleAnnotationAdded : undefined}
+      onAnnotationRemoved={canManageAnnotation ? handleAnnotationRemoved : undefined}
       noSpacing
     />
   )

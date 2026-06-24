@@ -1,14 +1,26 @@
+import type { LegacyPluginsSearchParams } from '@/app/components/plugins/plugin-routes'
+import Marketplace from '@/app/components/plugins/marketplace'
 import PluginPage from '@/app/components/plugins/plugin-page'
 import PluginsPanel from '@/app/components/plugins/plugin-page/plugins-panel'
-import Marketplace from '@/app/components/plugins/marketplace'
-import { getLocaleOnServer } from '@/i18n-config/server'
+import { getLegacyPluginRedirectPath } from '@/app/components/plugins/plugin-routes'
+import { redirect } from '@/next/navigation'
 
-const PluginList = async () => {
-  const locale = await getLocaleOnServer()
+type PluginListProps = {
+  searchParams?: Promise<LegacyPluginsSearchParams>
+}
+
+const PluginList = async ({
+  searchParams,
+}: PluginListProps) => {
+  const redirectPath = getLegacyPluginRedirectPath(await searchParams)
+
+  if (redirectPath)
+    redirect(redirectPath)
+
   return (
     <PluginPage
       plugins={<PluginsPanel />}
-      marketplace={<Marketplace locale={locale} pluginTypeSwitchClassName='top-[60px]' searchBoxAutoAnimate={false} showSearchParams={false} />}
+      marketplace={<Marketplace showInstallButton pluginTypeSwitchClassName="top-[60px]" />}
     />
   )
 }

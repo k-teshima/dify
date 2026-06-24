@@ -1,7 +1,10 @@
+import type { DeclaredOutputConfig } from '@dify/contracts/api/console/apps/types.gen'
 import type { GeneratorType } from '../../app/configuration/config/automatic/types'
+import type { FormInputItem } from '../../workflow/nodes/human-input/types'
 import type { Type } from '../../workflow/nodes/llm/types'
 import type { Dataset } from './plugins/context-block'
 import type { RoleName } from './plugins/history-block'
+import type { RosterReferenceToken } from './plugins/roster-reference-block/utils'
 import type {
   Node,
   NodeOutPutVar,
@@ -46,9 +49,21 @@ export type HistoryBlockType = {
   onEditRole?: () => void
 }
 
+export type RequestURLBlockType = {
+  show?: boolean
+  selectable?: boolean
+  onInsert?: () => void
+  onDelete?: () => void
+}
+
 export type VariableBlockType = {
   show?: boolean
   variables?: Option[]
+}
+
+export type RosterReferenceBlockType = {
+  show?: boolean
+  renderIcon?: (token: RosterReferenceToken) => React.ReactNode
 }
 
 export type ExternalToolBlockType = {
@@ -58,19 +73,42 @@ export type ExternalToolBlockType = {
 }
 
 export type GetVarType = (payload: {
-  nodeId: string,
-  valueSelector: ValueSelector,
+  nodeId: string
+  valueSelector: ValueSelector
 }) => Type
 
 export type WorkflowVariableBlockType = {
   show?: boolean
   variables?: NodeOutPutVar[]
-  workflowNodesMap?: Record<string, Pick<Node['data'], 'title' | 'type' | 'height' | 'width' | 'position'>>
+  workflowNodesMap?: WorkflowNodesMap
   onInsert?: () => void
   onDelete?: () => void
   getVarType?: GetVarType
   showManageInputField?: boolean
   onManageInputField?: () => void
+}
+
+export type AgentOutputBlockType = {
+  show?: boolean
+  outputs?: DeclaredOutputConfig[]
+  onChange?: (outputs: DeclaredOutputConfig[], prompt?: string) => void
+}
+
+export type WorkflowNodesMap = Record<string, Pick<Node['data'], 'title' | 'type' | 'height' | 'width' | 'position'> & { modelProvider?: string }>
+
+export type HITLInputBlockType = {
+  show?: boolean
+  nodeId: string
+  formInputs?: FormInputItem[]
+  variables?: NodeOutPutVar[]
+  workflowNodesMap?: WorkflowNodesMap
+  getVarType?: GetVarType
+  onFormInputsChange?: (inputs: FormInputItem[]) => void
+  onFormInputItemRemove: (varName: string) => void
+  onFormInputItemRename: (payload: FormInputItem, oldName: string) => void
+  onInsert?: () => void
+  onDelete?: () => void
+  readonly?: boolean
 }
 
 export type MenuTextMatch = {

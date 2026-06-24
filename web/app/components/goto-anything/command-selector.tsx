@@ -1,18 +1,36 @@
 import type { FC } from 'react'
-import { useEffect, useMemo } from 'react'
-import { Command } from 'cmdk'
-import { useTranslation } from 'react-i18next'
 import type { ActionItem } from './actions/types'
+import { Command } from 'cmdk'
+import { useEffect, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import { slashCommandRegistry } from './actions/commands/registry'
 
-type Props = {
+type Props = Readonly<{
   actions: Record<string, ActionItem>
   onCommandSelect: (commandKey: string) => void
   searchFilter?: string
   commandValue?: string
   onCommandValueChange?: (value: string) => void
   originalQuery?: string
-}
+}>
+
+const slashCommandDescriptionKeys = {
+  '/create': 'gotoAnything.actions.createCategoryDesc',
+  '/refine': 'gotoAnything.actions.refineCategoryDesc',
+  '/theme': 'gotoAnything.actions.themeCategoryDesc',
+  '/language': 'gotoAnything.actions.languageChangeDesc',
+  '/account': 'gotoAnything.actions.accountDesc',
+  '/feedback': 'gotoAnything.actions.feedbackDesc',
+  '/docs': 'gotoAnything.actions.docDesc',
+  '/community': 'gotoAnything.actions.communityDesc',
+} as const
+
+const actionDescriptionKeys = {
+  '@app': 'gotoAnything.actions.searchApplicationsDesc',
+  '@plugin': 'gotoAnything.actions.searchPluginsDesc',
+  '@knowledge': 'gotoAnything.actions.searchKnowledgeBasesDesc',
+  '@node': 'gotoAnything.actions.searchWorkflowNodesDesc',
+} as const
 
 const CommandSelector: FC<Props> = ({ actions, onCommandSelect, searchFilter, commandValue, onCommandValueChange, originalQuery }) => {
   const { t } = useTranslation()
@@ -22,13 +40,15 @@ const CommandSelector: FC<Props> = ({ actions, onCommandSelect, searchFilter, co
 
   // Get slash commands from registry
   const slashCommands = useMemo(() => {
-    if (!isSlashMode) return []
+    if (!isSlashMode)
+      return []
 
-    const allCommands = slashCommandRegistry.getAllCommands()
+    const availableCommands = slashCommandRegistry.getAvailableCommands()
     const filter = searchFilter?.toLowerCase() || '' // searchFilter already has '/' removed
 
-    return allCommands.filter((cmd) => {
-      if (!filter) return true
+    return availableCommands.filter((cmd) => {
+      if (!filter)
+        return true
       return cmd.name.toLowerCase().includes(filter)
     }).map(cmd => ({
       key: `/${cmd.name}`,
@@ -39,11 +59,13 @@ const CommandSelector: FC<Props> = ({ actions, onCommandSelect, searchFilter, co
   }, [isSlashMode, searchFilter])
 
   const filteredActions = useMemo(() => {
-    if (isSlashMode) return []
+    if (isSlashMode)
+      return []
 
     return Object.values(actions).filter((action) => {
       // Exclude slash action when in @ mode
-      if (action.key === '/') return false
+      if (action.key === '/')
+        return false
       if (!searchFilter)
         return true
       const filterLower = searchFilter.toLowerCase()
@@ -57,9 +79,9 @@ const CommandSelector: FC<Props> = ({ actions, onCommandSelect, searchFilter, co
     if (allItems.length > 0 && onCommandValueChange) {
       const currentValueExists = allItems.some(item => item.shortcut === commandValue)
       if (!currentValueExists)
-        onCommandValueChange(allItems[0].shortcut)
+        onCommandValueChange(allItems[0]!.shortcut)
     }
-  }, [searchFilter, allItems.length])
+  }, [allItems, commandValue, onCommandValueChange])
 
   if (allItems.length === 0) {
     return (
@@ -67,10 +89,10 @@ const CommandSelector: FC<Props> = ({ actions, onCommandSelect, searchFilter, co
         <div className="flex items-center justify-center py-8 text-center text-text-tertiary">
           <div>
             <div className="text-sm font-medium text-text-tertiary">
-              {t('app.gotoAnything.noMatchingCommands')}
+              {t('gotoAnything.noMatchingCommands', { ns: 'app' })}
             </div>
             <div className="mt-1 text-xs text-text-quaternary">
-              {t('app.gotoAnything.tryDifferentSearch')}
+              {t('gotoAnything.tryDifferentSearch', { ns: 'app' })}
             </div>
           </div>
         </div>
@@ -81,7 +103,7 @@ const CommandSelector: FC<Props> = ({ actions, onCommandSelect, searchFilter, co
   return (
     <div className="px-4 py-3">
       <div className="mb-2 text-left text-sm font-medium text-text-secondary">
-        {isSlashMode ? t('app.gotoAnything.groups.commands') : t('app.gotoAnything.selectSearchType')}
+        {isSlashMode ? t('gotoAnything.groups.commands', { ns: 'app' }) : t('gotoAnything.selectSearchType', { ns: 'app' })}
       </div>
       <Command.Group className="space-y-1">
         {allItems.map(item => (
@@ -91,36 +113,16 @@ const CommandSelector: FC<Props> = ({ actions, onCommandSelect, searchFilter, co
             className="flex cursor-pointer items-center rounded-md
                      p-2
                      transition-all
-                     duration-150 hover:bg-state-base-hover aria-[selected=true]:bg-state-base-hover-alt"
+                     duration-150 hover:bg-state-base-hover aria-selected:bg-state-base-hover-alt"
             onSelect={() => onCommandSelect(item.shortcut)}
           >
-            <span className="min-w-[4.5rem] text-left font-mono text-xs text-text-tertiary">
+            <span className="min-w-18 text-left font-mono text-xs text-text-tertiary">
               {item.shortcut}
             </span>
             <span className="ml-3 text-sm text-text-secondary">
-              {isSlashMode ? (
-                (() => {
-                  const slashKeyMap: Record<string, string> = {
-                    '/theme': 'app.gotoAnything.actions.themeCategoryDesc',
-                    '/language': 'app.gotoAnything.actions.languageChangeDesc',
-                    '/account': 'app.gotoAnything.actions.accountDesc',
-                    '/feedback': 'app.gotoAnything.actions.feedbackDesc',
-                    '/docs': 'app.gotoAnything.actions.docDesc',
-                    '/community': 'app.gotoAnything.actions.communityDesc',
-                  }
-                  return t(slashKeyMap[item.key] || item.description)
-                })()
-              ) : (
-                (() => {
-                  const keyMap: Record<string, string> = {
-                    '@app': 'app.gotoAnything.actions.searchApplicationsDesc',
-                    '@plugin': 'app.gotoAnything.actions.searchPluginsDesc',
-                    '@knowledge': 'app.gotoAnything.actions.searchKnowledgeBasesDesc',
-                    '@node': 'app.gotoAnything.actions.searchWorkflowNodesDesc',
-                  }
-                  return t(keyMap[item.key])
-                })()
-              )}
+              {isSlashMode
+                ? t(slashCommandDescriptionKeys[item.key as keyof typeof slashCommandDescriptionKeys] || item.description, { ns: 'app' })
+                : t(actionDescriptionKeys[item.key as keyof typeof actionDescriptionKeys], { ns: 'app' })}
             </span>
           </Command.Item>
         ))}

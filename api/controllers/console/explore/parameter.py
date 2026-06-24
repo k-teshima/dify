@@ -1,6 +1,9 @@
-from flask_restx import marshal_with
+from typing import Any, cast
+
+from pydantic import BaseModel, Field
 
 from controllers.common import fields
+from controllers.common.schema import register_response_schema_models
 from controllers.console import console_ns
 from controllers.console.app.error import AppUnavailableError
 from controllers.console.explore.wraps import InstalledAppResource
@@ -9,11 +12,18 @@ from models.model import AppMode, InstalledApp
 from services.app_service import AppService
 
 
+class ExploreAppMetaResponse(BaseModel):
+    tool_icons: dict[str, Any] = Field(default_factory=dict)
+
+
+register_response_schema_models(console_ns, fields.Parameters, ExploreAppMetaResponse)
+
+
 @console_ns.route("/installed-apps/<uuid:installed_app_id>/parameters", endpoint="installed_app_parameters")
 class AppParameterApi(InstalledAppResource):
     """Resource for app variables."""
 
-    @marshal_with(fields.parameters_fields)
+    @console_ns.response(200, "Success", console_ns.models[fields.Parameters.__name__])
     def get(self, installed_app: InstalledApp):
         """Retrieve app parameters."""
         app_model = installed_app.app
@@ -26,22 +36,24 @@ class AppParameterApi(InstalledAppResource):
             if workflow is None:
                 raise AppUnavailableError()
 
-            features_dict = workflow.features_dict
+            features_dict: dict[str, Any] = workflow.features_dict
             user_input_form = workflow.user_input_form(to_old_structure=True)
         else:
             app_model_config = app_model.app_model_config
             if app_model_config is None:
                 raise AppUnavailableError()
 
-            features_dict = app_model_config.to_dict()
+            features_dict = cast(dict[str, Any], app_model_config.to_dict())
 
             user_input_form = features_dict.get("user_input_form", [])
 
-        return get_parameters_from_feature_dict(features_dict=features_dict, user_input_form=user_input_form)
+        parameters = get_parameters_from_feature_dict(features_dict=features_dict, user_input_form=user_input_form)
+        return fields.Parameters.model_validate(parameters).model_dump(mode="json")
 
 
 @console_ns.route("/installed-apps/<uuid:installed_app_id>/meta", endpoint="installed_app_meta")
 class ExploreAppMetaApi(InstalledAppResource):
+    @console_ns.response(200, "Success", console_ns.models[ExploreAppMetaResponse.__name__])
     def get(self, installed_app: InstalledApp):
         """Get app meta"""
         app_model = installed_app.app

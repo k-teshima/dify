@@ -1,23 +1,34 @@
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from flask import make_response, request
 from flask_restx import Resource
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from werkzeug.exceptions import NotFound, Unauthorized
 
 from configs import dify_config
 from constants import HEADER_NAME_APP_CODE
+from controllers.common.fields import AccessTokenData
+from controllers.common.schema import query_params_from_model, register_response_schema_models, register_schema_models
 from controllers.web import web_ns
 from controllers.web.error import WebAppAuthRequiredError
 from extensions.ext_database import db
 from libs.passport import PassportService
-from libs.token import extract_access_token
+from libs.token import extract_webapp_access_token
+from models.enums import EndUserType
 from models.model import App, EndUser, Site
-from services.app_service import AppService
-from services.enterprise.enterprise_service import EnterpriseService
 from services.feature_service import FeatureService
 from services.webapp_auth_service import WebAppAuthService, WebAppAuthType
+
+
+class PassportQuery(BaseModel):
+    user_id: str | None = Field(default=None, description="End user session ID")
+
+
+register_schema_models(web_ns, PassportQuery)
+register_response_schema_models(web_ns, AccessTokenData)
 
 
 @web_ns.route("/passport")
@@ -26,6 +37,7 @@ class PassportResource(Resource):
 
     @web_ns.doc("get_passport")
     @web_ns.doc(description="Get authentication passport for web application access")
+    @web_ns.doc(params=query_params_from_model(PassportQuery))
     @web_ns.doc(
         responses={
             200: "Passport retrieved successfully",
@@ -33,27 +45,23 @@ class PassportResource(Resource):
             404: "Application or user not found",
         }
     )
+    @web_ns.response(200, "Passport retrieved successfully", web_ns.models[AccessTokenData.__name__])
     def get(self):
         system_features = FeatureService.get_system_features()
         app_code = request.headers.get(HEADER_NAME_APP_CODE)
         user_id = request.args.get("user_id")
-        access_token = extract_access_token(request)
-
+        access_token = extract_webapp_access_token(request)
         if app_code is None:
             raise Unauthorized("X-App-Code header is missing.")
-        app_id = AppService.get_app_id_by_code(app_code)
-        # exchange token for enterprise logined web user
-        enterprise_user_decoded = decode_enterprise_webapp_user_id(access_token)
-        if enterprise_user_decoded:
-            # a web user has already logged in, exchange a token for this app without redirecting to the login page
-            return exchange_token_for_existing_web_user(
-                app_code=app_code, enterprise_user_decoded=enterprise_user_decoded
-            )
-
         if system_features.webapp_auth.enabled:
-            app_settings = EnterpriseService.WebAppAuth.get_app_access_mode_by_id(app_id=app_id)
-            if not app_settings or not app_settings.access_mode == "public":
-                raise WebAppAuthRequiredError()
+            enterprise_user_decoded = decode_enterprise_webapp_user_id(access_token)
+            app_auth_type = WebAppAuthService.get_app_auth_type(app_code=app_code)
+            if app_auth_type != WebAppAuthType.PUBLIC:
+                if not enterprise_user_decoded:
+                    raise WebAppAuthRequiredError()
+                return exchange_token_for_existing_web_user(
+                    app_code=app_code, enterprise_user_decoded=enterprise_user_decoded, auth_type=app_auth_type
+                )
 
         # get site from db and check if it is normal
         site = db.session.scalar(select(Site).where(Site.code == app_code, Site.status == "normal"))
@@ -75,7 +83,7 @@ class PassportResource(Resource):
                 end_user = EndUser(
                     tenant_id=app_model.tenant_id,
                     app_id=app_model.id,
-                    type="browser",
+                    type=EndUserType.BROWSER,
                     is_anonymous=True,
                     session_id=user_id,
                 )
@@ -85,7 +93,7 @@ class PassportResource(Resource):
             end_user = EndUser(
                 tenant_id=app_model.tenant_id,
                 app_id=app_model.id,
-                type="browser",
+                type=EndUserType.BROWSER,
                 is_anonymous=True,
                 session_id=generate_session_id(),
             )
@@ -110,21 +118,23 @@ class PassportResource(Resource):
         return response
 
 
-def decode_enterprise_webapp_user_id(jwt_token: str | None):
+def decode_enterprise_webapp_user_id(jwt_token: str | None) -> dict[str, Any] | None:
     """
     Decode the enterprise user session from the Authorization header.
     """
     if not jwt_token:
         return None
 
-    decoded = PassportService().verify(jwt_token)
+    decoded: dict[str, Any] = PassportService().verify(jwt_token)
     source = decoded.get("token_source")
     if not source or source != "webapp_login_token":
         raise Unauthorized("Invalid token source. Expected 'webapp_login_token'.")
     return decoded
 
 
-def exchange_token_for_existing_web_user(app_code: str, enterprise_user_decoded: dict):
+def exchange_token_for_existing_web_user(
+    app_code: str, enterprise_user_decoded: dict[str, Any], auth_type: WebAppAuthType
+):
     """
     Exchange a token for an existing web user session.
     """
@@ -145,14 +155,15 @@ def exchange_token_for_existing_web_user(app_code: str, enterprise_user_decoded:
     if not app_model or app_model.status != "normal" or not app_model.enable_site:
         raise NotFound()
 
-    app_auth_type = WebAppAuthService.get_app_auth_type(app_code=app_code)
-
-    if app_auth_type == WebAppAuthType.PUBLIC:
-        return _exchange_for_public_app_token(app_model, site, enterprise_user_decoded)
-    elif app_auth_type == WebAppAuthType.EXTERNAL and user_auth_type != "external":
-        raise WebAppAuthRequiredError("Please login as external user.")
-    elif app_auth_type == WebAppAuthType.INTERNAL and user_auth_type != "internal":
-        raise WebAppAuthRequiredError("Please login as internal user.")
+    match auth_type:
+        case WebAppAuthType.PUBLIC:
+            return _exchange_for_public_app_token(app_model, site, enterprise_user_decoded)
+        case WebAppAuthType.EXTERNAL:
+            if user_auth_type != "external":
+                raise WebAppAuthRequiredError("Please login as external user.")
+        case WebAppAuthType.INTERNAL:
+            if user_auth_type != "internal":
+                raise WebAppAuthRequiredError("Please login as internal user.")
 
     end_user = None
     if end_user_id:
@@ -171,7 +182,7 @@ def exchange_token_for_existing_web_user(app_code: str, enterprise_user_decoded:
         end_user = EndUser(
             tenant_id=app_model.tenant_id,
             app_id=app_model.id,
-            type="browser",
+            type=EndUserType.BROWSER,
             is_anonymous=True,
             session_id=session_id,
         )
@@ -215,7 +226,7 @@ def _exchange_for_public_app_token(app_model, site, token_decoded):
         end_user = EndUser(
             tenant_id=app_model.tenant_id,
             app_id=app_model.id,
-            type="browser",
+            type=EndUserType.BROWSER,
             is_anonymous=True,
             session_id=generate_session_id(),
         )

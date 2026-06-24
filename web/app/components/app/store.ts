@@ -1,10 +1,9 @@
-import { create } from 'zustand'
-import type { App, AppSSO } from '@/types/app'
 import type { IChatItem } from '@/app/components/base/chat/chat/type'
+import type { App, AppSSO } from '@/types/app'
+import { create } from 'zustand'
 
 type State = {
   appDetail?: App & Partial<AppSSO>
-  appSidebarExpand: string
   currentLogItem?: IChatItem
   currentLogModalActiveTab: string
   showPromptLogModal: boolean
@@ -15,7 +14,6 @@ type State = {
 
 type Action = {
   setAppDetail: (appDetail?: App & Partial<AppSSO>) => void
-  setAppSidebarExpand: (state: string) => void
   setCurrentLogItem: (item?: IChatItem) => void
   setCurrentLogModalActiveTab: (tab: string) => void
   setShowPromptLogModal: (showPromptLogModal: boolean) => void
@@ -27,8 +25,6 @@ type Action = {
 export const useStore = create<State & Action>(set => ({
   appDetail: undefined,
   setAppDetail: appDetail => set(() => ({ appDetail })),
-  appSidebarExpand: '',
-  setAppSidebarExpand: appSidebarExpand => set(() => ({ appSidebarExpand })),
   currentLogItem: undefined,
   currentLogModalActiveTab: 'DETAIL',
   setCurrentLogItem: currentLogItem => set(() => ({ currentLogItem })),

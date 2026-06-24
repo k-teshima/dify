@@ -1,5 +1,6 @@
 import { API_PREFIX } from '@/config'
 import { fetchWithRetry } from '@/utils'
+import { isClient } from '@/utils/client'
 
 const LOCAL_STORAGE_KEY = 'is_other_tab_refreshing'
 
@@ -72,15 +73,18 @@ async function getNewAccessToken(timeout: number): Promise<void> {
 }
 
 function releaseRefreshLock() {
-  if (isRefreshing) {
-    isRefreshing = false
-    globalThis.localStorage.removeItem(LOCAL_STORAGE_KEY)
-    globalThis.localStorage.removeItem('last_refresh_time')
-    globalThis.removeEventListener('beforeunload', releaseRefreshLock)
-  }
+  // Always clear the refresh lock to avoid cross-tab deadlocks.
+  // This is safe to call multiple times and from tabs that were only waiting.
+  isRefreshing = false
+  globalThis.localStorage.removeItem(LOCAL_STORAGE_KEY)
+  globalThis.localStorage.removeItem('last_refresh_time')
+  globalThis.removeEventListener('beforeunload', releaseRefreshLock)
 }
 
-export async function refreshAccessTokenOrRelogin(timeout: number) {
+export async function refreshAccessTokenOrReLogin(timeout: number) {
+  if (!isClient)
+    return Promise.reject(new Error('refresh token is client-only'))
+
   return Promise.race([new Promise<void>((resolve, reject) => setTimeout(() => {
     releaseRefreshLock()
     reject(new Error('request timeout'))

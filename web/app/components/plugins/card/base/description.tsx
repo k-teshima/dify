@@ -1,12 +1,13 @@
 import type { FC } from 'react'
-import React, { useMemo } from 'react'
-import cn from '@/utils/classnames'
+import { cn } from '@langgenius/dify-ui/cn'
+import * as React from 'react'
+import { useMemo } from 'react'
 
-type Props = {
+type Props = Readonly<{
   className?: string
   text: string
   descriptionLineRows: number
-}
+}>
 
 const Description: FC<Props> = ({
   className,
@@ -22,7 +23,7 @@ const Description: FC<Props> = ({
       return 'h-12 line-clamp-3'
   }, [descriptionLineRows])
   return (
-    <div className={cn('system-xs-regular text-text-tertiary', lineClassName, className)}>
+    <div className={cn('system-xs-regular text-text-tertiary', lineClassName, className)} title={text}>
       {text}
     </div>
   )

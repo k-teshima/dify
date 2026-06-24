@@ -2,9 +2,8 @@ import os
 from unittest.mock import MagicMock
 
 import pytest
-from _pytest.monkeypatch import MonkeyPatch
-from qcloud_cos import CosS3Client  # type: ignore
-from qcloud_cos.streambody import StreamBody  # type: ignore
+from qcloud_cos import CosS3Client
+from qcloud_cos.streambody import StreamBody
 
 from tests.unit_tests.oss.__mock.base import (
     get_example_bucket,
@@ -67,7 +66,7 @@ MOCK = os.getenv("MOCK_SWITCH", "false").lower() == "true"
 
 
 @pytest.fixture
-def setup_tencent_cos_mock(monkeypatch: MonkeyPatch):
+def setup_tencent_cos_mock(monkeypatch: pytest.MonkeyPatch):
     if MOCK:
         monkeypatch.setattr(CosS3Client, "__init__", MockTencentCosClass.__init__)
         monkeypatch.setattr(CosS3Client, "put_object", MockTencentCosClass.put_object)

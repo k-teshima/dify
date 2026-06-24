@@ -1,6 +1,6 @@
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 from sqlalchemy import select
@@ -20,24 +20,34 @@ from core.app.entities.queue_entities import (
     QueueTextChunkEvent,
 )
 from core.app.features.annotation_reply.annotation_reply import AnnotationReplyFeature
+from core.app.layers.conversation_variable_persist_layer import ConversationVariablePersistenceLayer
+from core.app.workflow.layers.persistence import PersistenceWorkflowInfo, WorkflowPersistenceLayer
+from core.db.session_factory import create_session, session_factory
 from core.moderation.base import ModerationError
 from core.moderation.input_moderation import InputModeration
-from core.variables.variables import VariableUnion
-from core.workflow.enums import WorkflowType
-from core.workflow.graph_engine.command_channels.redis_channel import RedisChannel
-from core.workflow.graph_engine.layers.persistence import PersistenceWorkflowInfo, WorkflowPersistenceLayer
-from core.workflow.repositories.workflow_execution_repository import WorkflowExecutionRepository
-from core.workflow.repositories.workflow_node_execution_repository import WorkflowNodeExecutionRepository
-from core.workflow.runtime import GraphRuntimeState, VariablePool
-from core.workflow.system_variable import SystemVariable
-from core.workflow.variable_loader import VariableLoader
+from core.repositories.factory import WorkflowExecutionRepository, WorkflowNodeExecutionRepository
+from core.workflow.node_factory import get_default_root_node_id
+from core.workflow.nodes.agent_v2.session_cleanup_layer import build_workflow_agent_session_cleanup_layer
+from core.workflow.system_variables import (
+    build_bootstrap_variables,
+    build_system_variables,
+    system_variables_to_mapping,
+)
+from core.workflow.variable_pool_initializer import add_node_inputs_to_pool, add_variables_to_pool
 from core.workflow.workflow_entry import WorkflowEntry
 from extensions.ext_database import db
 from extensions.ext_redis import redis_client
+from extensions.otel import WorkflowAppRunnerHandler, trace_span
+from graphon.enums import WorkflowType
+from graphon.graph_engine.command_channels import RedisChannel
+from graphon.graph_engine.layers import GraphEngineLayer
+from graphon.runtime import GraphRuntimeState, VariablePool
+from graphon.variable_loader import VariableLoader
+from graphon.variables.variables import Variable
 from models import Workflow
-from models.enums import UserFrom
 from models.model import App, Conversation, Message, MessageAnnotation
 from models.workflow import ConversationVariable
+from services.conversation_variable_updater import ConversationVariableUpdater
 
 logger = logging.getLogger(__name__)
 
@@ -61,11 +71,14 @@ class AdvancedChatAppRunner(WorkflowBasedAppRunner):
         app: App,
         workflow_execution_repository: WorkflowExecutionRepository,
         workflow_node_execution_repository: WorkflowNodeExecutionRepository,
+        graph_engine_layers: Sequence[GraphEngineLayer] = (),
+        graph_runtime_state: GraphRuntimeState | None = None,
     ):
         super().__init__(
             queue_manager=queue_manager,
             variable_loader=variable_loader,
             app_id=application_generate_entity.app_config.app_id,
+            graph_engine_layers=graph_engine_layers,
         )
         self.application_generate_entity = application_generate_entity
         self.conversation = conversation
@@ -76,12 +89,14 @@ class AdvancedChatAppRunner(WorkflowBasedAppRunner):
         self._app = app
         self._workflow_execution_repository = workflow_execution_repository
         self._workflow_node_execution_repository = workflow_node_execution_repository
+        self._resume_graph_runtime_state = graph_runtime_state
 
+    @trace_span(WorkflowAppRunnerHandler)
     def run(self):
         app_config = self.application_generate_entity.app_config
         app_config = cast(AdvancedChatAppConfig, app_config)
 
-        system_inputs = SystemVariable(
+        system_inputs = build_system_variables(
             query=self.application_generate_entity.query,
             files=self.application_generate_entity.files,
             conversation_id=self.conversation.id,
@@ -92,38 +107,68 @@ class AdvancedChatAppRunner(WorkflowBasedAppRunner):
             workflow_execution_id=self.application_generate_entity.workflow_run_id,
         )
 
-        with Session(db.engine, expire_on_commit=False) as session:
+        with create_session() as session:
             app_record = session.scalar(select(App).where(App.id == app_config.app_id))
 
         if not app_record:
             raise ValueError("App not found")
 
+        invoke_from = self.application_generate_entity.invoke_from
         if self.application_generate_entity.single_iteration_run or self.application_generate_entity.single_loop_run:
+            invoke_from = InvokeFrom.DEBUGGER
+        user_from = self._resolve_user_from(invoke_from)
+
+        resume_state = self._resume_graph_runtime_state
+
+        if resume_state is not None:
+            graph_runtime_state = resume_state
+            variable_pool = graph_runtime_state.variable_pool
+            graph = self._init_graph(
+                graph_config=self._workflow.graph_dict,
+                graph_runtime_state=graph_runtime_state,
+                workflow_id=self._workflow.id,
+                tenant_id=self._workflow.tenant_id,
+                user_id=self.application_generate_entity.user_id,
+                invoke_from=invoke_from,
+                user_from=user_from,
+                trace_session_id=self.application_generate_entity.extras.get("trace_session_id"),
+            )
+        elif self.application_generate_entity.single_iteration_run or self.application_generate_entity.single_loop_run:
             # Handle single iteration or single loop run
             graph, variable_pool, graph_runtime_state = self._prepare_single_node_execution(
                 workflow=self._workflow,
                 single_iteration_run=self.application_generate_entity.single_iteration_run,
                 single_loop_run=self.application_generate_entity.single_loop_run,
+                user_id=self.application_generate_entity.user_id,
+                trace_session_id=self.application_generate_entity.extras.get("trace_session_id"),
             )
         else:
             inputs = self.application_generate_entity.inputs
             query = self.application_generate_entity.query
 
             # moderation
-            if self.handle_input_moderation(
+            stop, new_inputs, new_query = self.handle_input_moderation(
                 app_record=self._app,
                 app_generate_entity=self.application_generate_entity,
                 inputs=inputs,
                 query=query,
                 message_id=self.message.id,
-            ):
+            )
+            if stop:
                 return
+
+            self.application_generate_entity.inputs = new_inputs
+            self.application_generate_entity.query = new_query
+            system_inputs = build_system_variables(
+                system_variables_to_mapping(system_inputs),
+                query=new_query,
+            )
 
             # annotation reply
             if self.handle_annotation_reply(
                 app_record=self._app,
                 message=self.message,
-                query=query,
+                query=new_query,
                 app_generate_entity=self.application_generate_entity,
             ):
                 return
@@ -133,14 +178,17 @@ class AdvancedChatAppRunner(WorkflowBasedAppRunner):
 
             # Create a variable pool.
             # init variable pool
-            variable_pool = VariablePool(
-                system_variables=system_inputs,
-                user_inputs=inputs,
-                environment_variables=self._workflow.environment_variables,
-                # Based on the definition of `VariableUnion`,
-                # `list[Variable]` can be safely used as `list[VariableUnion]` since they are compatible.
-                conversation_variables=conversation_variables,
+            variable_pool = VariablePool()
+            add_variables_to_pool(
+                variable_pool,
+                build_bootstrap_variables(
+                    system_variables=system_inputs,
+                    environment_variables=self._workflow.environment_variables,
+                    conversation_variables=conversation_variables,
+                ),
             )
+            root_node_id = get_default_root_node_id(self._workflow.graph_dict)
+            add_node_inputs_to_pool(variable_pool, node_id=root_node_id, inputs=new_inputs)
 
             # init graph
             graph_runtime_state = GraphRuntimeState(variable_pool=variable_pool, start_at=time.time())
@@ -150,8 +198,14 @@ class AdvancedChatAppRunner(WorkflowBasedAppRunner):
                 workflow_id=self._workflow.id,
                 tenant_id=self._workflow.tenant_id,
                 user_id=self.application_generate_entity.user_id,
+                user_from=user_from,
+                invoke_from=invoke_from,
+                root_node_id=root_node_id,
+                trace_session_id=self.application_generate_entity.extras.get("trace_session_id"),
             )
 
+        # Release the Flask scoped session before workflow execution so a checked-out DB connection
+        # is not held for the lifetime of the graph run.
         db.session.close()
 
         # RUN WORKFLOW
@@ -167,12 +221,8 @@ class AdvancedChatAppRunner(WorkflowBasedAppRunner):
             graph=graph,
             graph_config=self._workflow.graph_dict,
             user_id=self.application_generate_entity.user_id,
-            user_from=(
-                UserFrom.ACCOUNT
-                if self.application_generate_entity.invoke_from in {InvokeFrom.EXPLORE, InvokeFrom.DEBUGGER}
-                else UserFrom.END_USER
-            ),
-            invoke_from=self.application_generate_entity.invoke_from,
+            user_from=user_from,
+            invoke_from=invoke_from,
             call_depth=self.application_generate_entity.call_depth,
             variable_pool=variable_pool,
             graph_runtime_state=graph_runtime_state,
@@ -195,6 +245,13 @@ class AdvancedChatAppRunner(WorkflowBasedAppRunner):
         )
 
         workflow_entry.graph_engine.layer(persistence_layer)
+        workflow_entry.graph_engine.layer(build_workflow_agent_session_cleanup_layer())
+        conversation_variable_layer = ConversationVariablePersistenceLayer(
+            ConversationVariableUpdater(session_factory.get_session_maker())
+        )
+        workflow_entry.graph_engine.layer(conversation_variable_layer)
+        for layer in self._graph_engine_layers:
+            workflow_entry.graph_engine.layer(layer)
 
         generator = workflow_entry.run()
 
@@ -208,10 +265,10 @@ class AdvancedChatAppRunner(WorkflowBasedAppRunner):
         inputs: Mapping[str, Any],
         query: str,
         message_id: str,
-    ) -> bool:
+    ) -> tuple[bool, Mapping[str, Any], str]:
         try:
             # process sensitive_word_avoidance
-            _, inputs, query = self.moderation_for_inputs(
+            _, new_inputs, new_query = self.moderation_for_inputs(
                 app_id=app_record.id,
                 tenant_id=app_generate_entity.app_config.tenant_id,
                 app_generate_entity=app_generate_entity,
@@ -221,9 +278,9 @@ class AdvancedChatAppRunner(WorkflowBasedAppRunner):
             )
         except ModerationError as e:
             self._complete_with_stream_output(text=str(e), stopped_by=QueueStopEvent.StopBy.INPUT_MODERATION)
-            return True
+            return True, inputs, query
 
-        return False
+        return False, new_inputs, new_query
 
     def handle_annotation_reply(
         self, app_record: App, message: Message, query: str, app_generate_entity: AdvancedChatAppGenerateEntity
@@ -302,7 +359,7 @@ class AdvancedChatAppRunner(WorkflowBasedAppRunner):
             trace_manager=app_generate_entity.trace_manager,
         )
 
-    def _initialize_conversation_variables(self) -> list[VariableUnion]:
+    def _initialize_conversation_variables(self) -> list[Variable]:
         """
         Initialize conversation variables for the current conversation.
 
@@ -313,7 +370,7 @@ class AdvancedChatAppRunner(WorkflowBasedAppRunner):
 
         :return: List of conversation variables ready for use
         """
-        with Session(db.engine) as session:
+        with create_session() as session, session.begin():
             existing_variables = self._load_existing_conversation_variables(session)
 
             if not existing_variables:
@@ -326,8 +383,7 @@ class AdvancedChatAppRunner(WorkflowBasedAppRunner):
             # Convert to Variable objects for use in the workflow
             conversation_variables = [var.to_variable() for var in existing_variables]
 
-            session.commit()
-            return cast(list[VariableUnion], conversation_variables)
+            return cast(list[Variable], conversation_variables)
 
     def _load_existing_conversation_variables(self, session: Session) -> list[ConversationVariable]:
         """

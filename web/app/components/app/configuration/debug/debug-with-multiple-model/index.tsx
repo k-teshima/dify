@@ -1,29 +1,30 @@
 import type { FC } from 'react'
+import type { DebugWithMultipleModelContextType } from './context'
+import type { InputForm } from '@/app/components/base/chat/chat/type'
+import type { FileEntity } from '@/app/components/base/file-uploader/types'
 import {
   memo,
   useCallback,
   useMemo,
 } from 'react'
-import { APP_CHAT_WITH_MULTIPLE_MODEL } from '../types'
-import DebugItem from './debug-item'
-import {
-  DebugWithMultipleModelContextProvider,
-  useDebugWithMultipleModelContext,
-} from './context'
-import type { DebugWithMultipleModelContextType } from './context'
-import { useEventEmitterContextContext } from '@/context/event-emitter'
-import ChatInputArea from '@/app/components/base/chat/chat/chat-input-area'
-import { useDebugConfigurationContext } from '@/context/debug-configuration'
-import { useFeatures } from '@/app/components/base/features/hooks'
 import { useStore as useAppStore } from '@/app/components/app/store'
-import type { FileEntity } from '@/app/components/base/file-uploader/types'
-import type { InputForm } from '@/app/components/base/chat/chat/type'
+import ChatInputArea from '@/app/components/base/chat/chat/chat-input-area'
+import { useFeatures } from '@/app/components/base/features/hooks'
+import { useDebugConfigurationContext } from '@/context/debug-configuration'
+import { useEventEmitterContextContext } from '@/context/event-emitter'
+import { AppModeEnum } from '@/types/app'
+import { APP_CHAT_WITH_MULTIPLE_MODEL } from '../types'
+import { useDebugWithMultipleModelContext } from './context'
+import { DebugWithMultipleModelContextProvider } from './context-provider'
+import DebugItem from './debug-item'
 
 const DebugWithMultipleModel = () => {
   const {
     mode,
     inputs,
     modelConfig,
+    readonly,
+    canTestAndRun = false,
   } = useDebugConfigurationContext()
   const speech2text = useFeatures(s => s.features.speech2text)
   const file = useFeatures(s => s.features.file)
@@ -33,9 +34,11 @@ const DebugWithMultipleModel = () => {
   } = useDebugWithMultipleModelContext()
 
   const { eventEmitter } = useEventEmitterContextContext()
-  const isChatMode = mode === 'chat' || mode === 'agent-chat'
+  const isChatMode = mode === AppModeEnum.CHAT || mode === AppModeEnum.AGENT_CHAT
 
   const handleSend = useCallback((message: string, files?: FileEntity[]) => {
+    if (!canTestAndRun)
+      return
     if (checkCanSend && !checkCanSend())
       return
 
@@ -46,7 +49,7 @@ const DebugWithMultipleModel = () => {
         files,
       },
     } as any)
-  }, [eventEmitter, checkCanSend])
+  }, [canTestAndRun, eventEmitter, checkCanSend])
 
   const twoLine = multipleModelConfigs.length === 2
   const threeLine = multipleModelConfigs.length === 3
@@ -110,7 +113,7 @@ const DebugWithMultipleModel = () => {
     })) as InputForm[]
 
   return (
-    <div className='flex h-full flex-col'>
+    <div className="flex h-full flex-col">
       <div
         className={`
           relative mb-3 grow overflow-auto px-6
@@ -123,7 +126,7 @@ const DebugWithMultipleModel = () => {
               key={modelConfig.id}
               modelAndParameter={modelConfig}
               className={`
-                absolute left-6 top-0 min-h-[200px]
+                absolute top-0 left-6 min-h-[200px]
                 ${twoLine && index === 0 && 'mr-2'}
                 ${threeLine && (index === 0 || index === 1) && 'mr-2'}
                 ${fourLine && (index === 0 || index === 2) && 'mr-2'}
@@ -139,10 +142,13 @@ const DebugWithMultipleModel = () => {
         }
       </div>
       {isChatMode && (
-        <div className='shrink-0 px-6 pb-0'>
+        <div className="shrink-0 px-6 pb-0">
           <ChatInputArea
-            botName='Bot'
+            botName="Bot"
+            readonly={!canTestAndRun}
+            disabled={!canTestAndRun}
             showFeatureBar
+            featureBarReadonly={readonly}
             showFileUpload={false}
             onFeatureBarClick={setShowAppConfigureFeaturesModal}
             onSend={handleSend}

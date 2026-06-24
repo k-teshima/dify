@@ -1,24 +1,28 @@
+import { toast } from '@langgenius/dify-ui/toast'
 import {
   useCallback,
   useState,
 } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useStore as useAppStore } from '@/app/components/app/store'
 import {
   DSL_EXPORT_CHECK,
 } from '@/app/components/workflow/constants'
-import { useNodesSyncDraft } from './use-nodes-sync-draft'
 import { useEventEmitterContextContext } from '@/context/event-emitter'
-import { fetchWorkflowDraft } from '@/service/workflow'
 import { exportAppConfig } from '@/service/apps'
-import { useToastContext } from '@/app/components/base/toast'
-import { useStore as useAppStore } from '@/app/components/app/store'
+import { fetchWorkflowDraft } from '@/service/workflow'
+import { downloadBlob } from '@/utils/download'
+import {
+  useNodesSyncDraft,
+  useNodesSyncDraftByCanEdit,
+} from './use-nodes-sync-draft'
 
-export const useDSL = () => {
+type DoSyncWorkflowDraft = ReturnType<typeof useNodesSyncDraft>['doSyncWorkflowDraft']
+
+const useDSLBase = (doSyncWorkflowDraft: DoSyncWorkflowDraft) => {
   const { t } = useTranslation()
-  const { notify } = useToastContext()
   const { eventEmitter } = useEventEmitterContextContext()
   const [exporting, setExporting] = useState(false)
-  const { doSyncWorkflowDraft } = useNodesSyncDraft()
 
   const appDetail = useAppStore(s => s.appDetail)
 
@@ -37,21 +41,16 @@ export const useDSL = () => {
         include,
         workflowID: workflowId,
       })
-      const a = document.createElement('a')
       const file = new Blob([data], { type: 'application/yaml' })
-      const url = URL.createObjectURL(file)
-      a.href = url
-      a.download = `${appDetail.name}.yml`
-      a.click()
-      URL.revokeObjectURL(url)
+      downloadBlob({ data: file, fileName: `${appDetail.name}.yml` })
     }
     catch {
-      notify({ type: 'error', message: t('app.exportFailed') })
+      toast.error(t('exportFailed', { ns: 'app' }))
     }
     finally {
       setExporting(false)
     }
-  }, [appDetail, notify, t, doSyncWorkflowDraft, exporting])
+  }, [appDetail, t, doSyncWorkflowDraft, exporting])
 
   const exportCheck = useCallback(async () => {
     if (!appDetail)
@@ -71,12 +70,24 @@ export const useDSL = () => {
       } as any)
     }
     catch {
-      notify({ type: 'error', message: t('app.exportFailed') })
+      toast.error(t('exportFailed', { ns: 'app' }))
     }
-  }, [appDetail, eventEmitter, handleExportDSL, notify, t])
+  }, [appDetail, eventEmitter, handleExportDSL, t])
 
   return {
     exportCheck,
     handleExportDSL,
   }
+}
+
+export const useDSLByCanEdit = (canEdit: boolean) => {
+  const { doSyncWorkflowDraft } = useNodesSyncDraftByCanEdit(canEdit)
+
+  return useDSLBase(doSyncWorkflowDraft)
+}
+
+export const useDSL = () => {
+  const { doSyncWorkflowDraft } = useNodesSyncDraft()
+
+  return useDSLBase(doSyncWorkflowDraft)
 }

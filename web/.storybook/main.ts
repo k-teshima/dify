@@ -1,23 +1,18 @@
-import type { StorybookConfig } from '@storybook/nextjs'
+import type { StorybookConfig } from '@storybook/nextjs-vite'
 
 const config: StorybookConfig = {
-  stories: ['../app/components/**/*.stories.@(js|jsx|mjs|ts|tsx)'],
+  stories: [
+    '../app/components/**/*.stories.@(js|jsx|mjs|ts|tsx)',
+    '../features/**/*.stories.@(js|jsx|mjs|ts|tsx)',
+  ],
   addons: [
-    '@storybook/addon-onboarding',
+    // Not working with Storybook Vite framework
+    // '@storybook/addon-onboarding',
     '@storybook/addon-links',
     '@storybook/addon-docs',
     '@chromatic-com/storybook',
   ],
-  framework: {
-    name: '@storybook/nextjs',
-    options: {
-      builder: {
-        useSWC: true,
-        lazyCompilation: false,
-      },
-      nextConfigPath: undefined,
-    },
-  },
+  framework: '@storybook/nextjs-vite',
   staticDirs: ['../public'],
   core: {
     disableWhatsNewNotifications: true,

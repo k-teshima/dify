@@ -1,13 +1,14 @@
 import json
+from typing import override
 from urllib.parse import urljoin
 
 import httpx
 
-from services.auth.api_key_auth_base import ApiKeyAuthBase
+from services.auth.api_key_auth_base import ApiKeyAuthBase, AuthCredentials
 
 
 class WatercrawlAuth(ApiKeyAuthBase):
-    def __init__(self, credentials: dict):
+    def __init__(self, credentials: AuthCredentials):
         super().__init__(credentials)
         auth_type = credentials.get("auth_type")
         if auth_type != "x-api-key":
@@ -18,6 +19,7 @@ class WatercrawlAuth(ApiKeyAuthBase):
         if not self.api_key:
             raise ValueError("No API key provided")
 
+    @override
     def validate_credentials(self):
         headers = self._prepare_headers()
         url = urljoin(self.base_url, "/api/v1/core/crawl-requests/")
@@ -35,10 +37,16 @@ class WatercrawlAuth(ApiKeyAuthBase):
 
     def _handle_error(self, response):
         if response.status_code in {402, 409, 500}:
-            error_message = response.json().get("error", "Unknown error occurred")
+            try:
+                error_message = response.json().get("error", "Unknown error occurred")
+            except ValueError:
+                error_message = response.text or "Unknown error occurred"
             raise Exception(f"Failed to authorize. Status code: {response.status_code}. Error: {error_message}")
         else:
             if response.text:
-                error_message = json.loads(response.text).get("error", "Unknown error occurred")
+                try:
+                    error_message = json.loads(response.text).get("error", "Unknown error occurred")
+                except ValueError:
+                    error_message = response.text
                 raise Exception(f"Failed to authorize. Status code: {response.status_code}. Error: {error_message}")
             raise Exception(f"Unexpected error occurred while trying to authorize. Status code: {response.status_code}")

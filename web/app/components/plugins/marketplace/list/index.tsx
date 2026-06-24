@@ -1,45 +1,43 @@
 'use client'
 import type { Plugin } from '../../types'
-import type { MarketplaceCollection } from '../types'
-import ListWithCollection from './list-with-collection'
-import CardWrapper from './card-wrapper'
+import type { MarketplaceCollection, SearchParamsFromCollection } from '../types'
+import { cn } from '@langgenius/dify-ui/cn'
+import { PluginInstallPermissionProviderGuard } from '@/app/components/plugins/install-plugin/components/plugin-install-permission-provider'
 import Empty from '../empty'
-import cn from '@/utils/classnames'
+import CardWrapper from './card-wrapper'
+import ListWithCollection from './list-with-collection'
 
 type ListProps = {
   marketplaceCollections: MarketplaceCollection[]
   marketplaceCollectionPluginsMap: Record<string, Plugin[]>
   plugins?: Plugin[]
   showInstallButton?: boolean
-  locale: string
   cardContainerClassName?: string
   cardRender?: (plugin: Plugin) => React.JSX.Element | null
-  onMoreClick?: () => void
   emptyClassName?: string
+  onCollectionMoreClick?: (searchParams?: SearchParamsFromCollection) => void
 }
 const List = ({
   marketplaceCollections,
   marketplaceCollectionPluginsMap,
   plugins,
   showInstallButton,
-  locale,
   cardContainerClassName,
   cardRender,
-  onMoreClick,
   emptyClassName,
+  onCollectionMoreClick,
 }: ListProps) => {
   return (
-    <>
+    <PluginInstallPermissionProviderGuard canInstallPlugin={!!showInstallButton}>
       {
         !plugins && (
           <ListWithCollection
             marketplaceCollections={marketplaceCollections}
             marketplaceCollectionPluginsMap={marketplaceCollectionPluginsMap}
             showInstallButton={showInstallButton}
-            locale={locale}
             cardContainerClassName={cardContainerClassName}
             cardRender={cardRender}
-            onMoreClick={onMoreClick}
+            onCollectionMoreClick={onCollectionMoreClick}
           />
         )
       }
@@ -48,7 +46,8 @@ const List = ({
           <div className={cn(
             'grid grid-cols-4 gap-3',
             cardContainerClassName,
-          )}>
+          )}
+          >
             {
               plugins.map((plugin) => {
                 if (cardRender)
@@ -59,7 +58,6 @@ const List = ({
                     key={`${plugin.org}/${plugin.name}`}
                     plugin={plugin}
                     showInstallButton={showInstallButton}
-                    locale={locale}
                   />
                 )
               })
@@ -69,10 +67,10 @@ const List = ({
       }
       {
         plugins && !plugins.length && (
-          <Empty className={emptyClassName} locale={locale} />
+          <Empty className={emptyClassName} />
         )
       }
-    </>
+    </PluginInstallPermissionProviderGuard>
   )
 }
 

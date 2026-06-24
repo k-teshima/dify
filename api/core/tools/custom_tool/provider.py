@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import override
+
 from pydantic import Field
 from sqlalchemy import select
 
@@ -20,7 +24,7 @@ from extensions.ext_database import db
 from models.tools import ApiToolProvider
 
 
-class ApiToolProviderController(ToolProviderController):
+class ApiToolProviderController(ToolProviderController[ToolProviderEntity, ApiTool]):
     provider_id: str
     tenant_id: str
     tools: list[ApiTool] = Field(default_factory=list)
@@ -32,7 +36,7 @@ class ApiToolProviderController(ToolProviderController):
         self.tools = []
 
     @classmethod
-    def from_db(cls, db_provider: ApiToolProvider, auth_type: ApiProviderAuthType) -> "ApiToolProviderController":
+    def from_db(cls, db_provider: ApiToolProvider, auth_type: ApiProviderAuthType) -> ApiToolProviderController:
         credentials_schema = [
             ProviderConfig(
                 name="auth_type",
@@ -120,6 +124,7 @@ class ApiToolProviderController(ToolProviderController):
         )
 
     @property
+    @override
     def provider_type(self) -> ToolProviderType:
         return ToolProviderType.API
 
@@ -192,6 +197,7 @@ class ApiToolProviderController(ToolProviderController):
         self.tools = tools
         return tools
 
+    @override
     def get_tool(self, tool_name: str) -> ApiTool:
         """
         get tool by name

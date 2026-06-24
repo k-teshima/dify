@@ -1,10 +1,9 @@
 'use client'
 
-import { createContext, useContext, useMemo } from 'react'
 import type { FC, ReactNode } from 'react'
-import useSWR from 'swr'
 import type { ExternalAPIItem, ExternalAPIListResponse } from '@/models/datasets'
-import { fetchExternalAPIList } from '@/service/datasets'
+import { createContext, use, useCallback, useMemo } from 'react'
+import { useExternalKnowledgeApiList } from '@/service/knowledge/use-dataset'
 
 type ExternalKnowledgeApiContextType = {
   externalKnowledgeApiList: ExternalAPIItem[]
@@ -14,15 +13,20 @@ type ExternalKnowledgeApiContextType = {
 
 const ExternalKnowledgeApiContext = createContext<ExternalKnowledgeApiContextType | undefined>(undefined)
 
-export type ExternalKnowledgeApiProviderProps = {
+type ExternalKnowledgeApiProviderProps = {
   children: ReactNode
+  enabled?: boolean
 }
 
-export const ExternalKnowledgeApiProvider: FC<ExternalKnowledgeApiProviderProps> = ({ children }) => {
-  const { data, mutate: mutateExternalKnowledgeApis, isLoading } = useSWR<ExternalAPIListResponse>(
-    { url: '/datasets/external-knowledge-api' },
-    fetchExternalAPIList,
-  )
+export const ExternalKnowledgeApiProvider: FC<ExternalKnowledgeApiProviderProps> = ({ children, enabled = true }) => {
+  const { data, refetch, isLoading } = useExternalKnowledgeApiList({ enabled })
+
+  const mutateExternalKnowledgeApis = useCallback(() => {
+    if (!enabled)
+      return Promise.resolve(undefined)
+
+    return refetch().then(res => res.data)
+  }, [enabled, refetch])
 
   const contextValue = useMemo<ExternalKnowledgeApiContextType>(() => ({
     externalKnowledgeApiList: data?.data || [],
@@ -38,7 +42,7 @@ export const ExternalKnowledgeApiProvider: FC<ExternalKnowledgeApiProviderProps>
 }
 
 export const useExternalKnowledgeApi = () => {
-  const context = useContext(ExternalKnowledgeApiContext)
+  const context = use(ExternalKnowledgeApiContext)
   if (context === undefined)
     throw new Error('useExternalKnowledgeApi must be used within a ExternalKnowledgeApiProvider')
 

@@ -1,6 +1,6 @@
 import type { Var } from './types'
 import { BlockEnum, VarType } from './types'
-export const MAX_ITERATION_PARALLEL_NUM = 10
+
 export const MIN_ITERATION_PARALLEL_NUM = 1
 export const DEFAULT_ITER_TIMES = 1
 export const DEFAULT_LOOP_TIMES = 1
@@ -9,10 +9,6 @@ export const X_OFFSET = 60
 export const NODE_WIDTH_X_OFFSET = NODE_WIDTH + X_OFFSET
 export const Y_OFFSET = 39
 export const START_INITIAL_POSITION = { x: 80, y: 282 }
-export const AUTO_LAYOUT_OFFSET = {
-  x: -42,
-  y: 243,
-}
 export const ITERATION_NODE_Z_INDEX = 1
 export const ITERATION_CHILDREN_Z_INDEX = 1002
 export const ITERATION_PADDING = {
@@ -33,7 +29,58 @@ export const LOOP_PADDING = {
 
 export const NODE_LAYOUT_HORIZONTAL_PADDING = 60
 export const NODE_LAYOUT_VERTICAL_PADDING = 60
-export const NODE_LAYOUT_MIN_DISTANCE = 100
+
+export const isInWorkflowPage = () => {
+  const pathname = globalThis.location.pathname
+  return /^\/app\/[^/]+\/workflow$/.test(pathname) || /^\/workflow\/[^/]+$/.test(pathname)
+}
+export const getGlobalVars = (isChatMode: boolean): Var[] => {
+  const isInWorkflow = isInWorkflowPage()
+  const vars: Var[] = [
+    ...(isChatMode
+      ? [
+          {
+            variable: 'sys.dialogue_count',
+            type: VarType.number,
+          },
+          {
+            variable: 'sys.conversation_id',
+            type: VarType.string,
+          },
+        ]
+      : []),
+    {
+      variable: 'sys.user_id',
+      type: VarType.string,
+    },
+    {
+      variable: 'sys.app_id',
+      type: VarType.string,
+    },
+    {
+      variable: 'sys.workflow_id',
+      type: VarType.string,
+    },
+    {
+      variable: 'sys.workflow_run_id',
+      type: VarType.string,
+    },
+    ...((isInWorkflow && !isChatMode)
+      ? [
+          {
+            variable: 'sys.timestamp',
+            type: VarType.number,
+          },
+        ]
+      : []),
+  ]
+  return vars
+}
+
+export const VAR_SHOW_NAME_MAP: Record<string, string> = {
+  'sys.query': 'query',
+  'sys.files': 'files',
+}
 
 export const RETRIEVAL_OUTPUT_STRUCT = `{
   "content": "",
@@ -56,16 +103,40 @@ export const RETRIEVAL_OUTPUT_STRUCT = `{
 }`
 
 export const SUPPORT_OUTPUT_VARS_NODE = [
-  BlockEnum.Start, BlockEnum.LLM, BlockEnum.KnowledgeRetrieval, BlockEnum.Code, BlockEnum.TemplateTransform,
-  BlockEnum.HttpRequest, BlockEnum.Tool, BlockEnum.VariableAssigner, BlockEnum.VariableAggregator, BlockEnum.QuestionClassifier,
-  BlockEnum.ParameterExtractor, BlockEnum.Iteration, BlockEnum.Loop,
-  BlockEnum.DocExtractor, BlockEnum.ListFilter,
-  BlockEnum.Agent, BlockEnum.DataSource,
+  BlockEnum.Start,
+  BlockEnum.TriggerWebhook,
+  BlockEnum.TriggerPlugin,
+  BlockEnum.LLM,
+  BlockEnum.KnowledgeRetrieval,
+  BlockEnum.Code,
+  BlockEnum.TemplateTransform,
+  BlockEnum.HttpRequest,
+  BlockEnum.Tool,
+  BlockEnum.VariableAssigner,
+  BlockEnum.VariableAggregator,
+  BlockEnum.QuestionClassifier,
+  BlockEnum.ParameterExtractor,
+  BlockEnum.Iteration,
+  BlockEnum.Loop,
+  BlockEnum.DocExtractor,
+  BlockEnum.ListFilter,
+  BlockEnum.Agent,
+  BlockEnum.AgentV2,
+  BlockEnum.DataSource,
+  BlockEnum.HumanInput,
 ]
 
 export const AGENT_OUTPUT_STRUCT: Var[] = [
   {
-    variable: 'usage',
+    variable: 'text',
+    type: VarType.string,
+  },
+  {
+    variable: 'files',
+    type: VarType.arrayFile,
+  },
+  {
+    variable: 'json',
     type: VarType.object,
   },
 ]
@@ -105,6 +176,10 @@ export const QUESTION_CLASSIFIER_OUTPUT_STRUCT = [
     type: VarType.string,
   },
   {
+    variable: 'class_label',
+    type: VarType.string,
+  },
+  {
     variable: 'usage',
     type: VarType.object,
   },
@@ -141,6 +216,21 @@ export const TOOL_OUTPUT_STRUCT: Var[] = [
   {
     variable: 'json',
     type: VarType.arrayObject,
+  },
+]
+
+export const HUMAN_INPUT_OUTPUT_STRUCT: Var[] = [
+  {
+    variable: '__action_id',
+    type: VarType.string,
+  },
+  {
+    variable: '__action_value',
+    type: VarType.string,
+  },
+  {
+    variable: '__rendered_content',
+    type: VarType.string,
   },
 ]
 

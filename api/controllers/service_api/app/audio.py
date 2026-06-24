@@ -1,10 +1,13 @@
 import logging
 
 from flask import request
-from flask_restx import Resource, reqparse
+from flask_restx import Resource
 from werkzeug.exceptions import InternalServerError
 
 import services
+from controllers.common.controller_schemas import TextToAudioPayload
+from controllers.common.fields import AudioBinaryResponse, AudioTranscriptResponse
+from controllers.common.schema import register_response_schema_models, register_schema_model
 from controllers.service_api import service_api_ns
 from controllers.service_api.app.error import (
     AppUnavailableError,
@@ -17,9 +20,10 @@ from controllers.service_api.app.error import (
     ProviderQuotaExceededError,
     UnsupportedAudioTypeError,
 )
+from controllers.service_api.schema import binary_response, expect_with_user, multipart_file_params
 from controllers.service_api.wraps import FetchUserArg, WhereisUserArg, validate_app_token
 from core.errors.error import ModelCurrentlyNotSupportError, ProviderTokenNotInitError, QuotaExceededError
-from core.model_runtime.errors.invoke import InvokeError
+from graphon.model_runtime.errors.invoke import InvokeError
 from models.model import App, EndUser
 from services.audio_service import AudioService
 from services.errors.audio import (
@@ -31,11 +35,45 @@ from services.errors.audio import (
 
 logger = logging.getLogger(__name__)
 
+register_response_schema_models(service_api_ns, AudioBinaryResponse, AudioTranscriptResponse)
+
 
 @service_api_ns.route("/audio-to-text")
 class AudioApi(Resource):
+    @service_api_ns.doc(
+        summary="Convert Audio to Text",
+        description=(
+            "Convert audio file to text. Supported MIME types: `audio/mp3`, `audio/mpga`, `audio/m4a`, "
+            "`audio/wav`, and `audio/amr`. File size limit is `30 MB`."
+        ),
+        tags=["TTS"],
+        responses={
+            200: "Successfully converted audio to text.",
+            400: (
+                "- `app_unavailable` : App unavailable or misconfigured.\n"
+                "- `provider_not_support_speech_to_text` : Model provider does not support speech-to-text.\n"
+                "- `provider_not_initialize` : No valid model provider credentials found.\n"
+                "- `provider_quota_exceeded` : Model provider quota exhausted.\n"
+                "- `model_currently_not_support` : Current model does not support this operation.\n"
+                "- `completion_request_error` : Speech recognition request failed."
+            ),
+            413: "`audio_too_large` : Audio file size exceeded the limit.",
+            415: "`unsupported_audio_type` : Audio type is not allowed.",
+            500: "`internal_server_error` : Internal server error.",
+        },
+    )
     @service_api_ns.doc("audio_to_text")
     @service_api_ns.doc(description="Convert audio to text using speech-to-text")
+    @service_api_ns.doc(
+        consumes=["multipart/form-data"],
+        params=multipart_file_params(
+            include_user=True,
+            file_description=(
+                "Audio file to transcribe. Supported MIME types: `audio/mp3`, `audio/mpga`, `audio/m4a`, "
+                "`audio/wav`, and `audio/amr`. File size limit is `30 MB`."
+            ),
+        ),
+    )
     @service_api_ns.doc(
         responses={
             200: "Audio successfully transcribed",
@@ -45,6 +83,11 @@ class AudioApi(Resource):
             415: "Unsupported audio type",
             500: "Internal server error",
         }
+    )
+    @service_api_ns.response(
+        200,
+        "Audio successfully transcribed",
+        service_api_ns.models[AudioTranscriptResponse.__name__],
     )
     @validate_app_token(fetch_user_arg=FetchUserArg(fetch_from=WhereisUserArg.FORM))
     def post(self, app_model: App, end_user: EndUser):
@@ -84,19 +127,32 @@ class AudioApi(Resource):
             raise InternalServerError()
 
 
-# Define parser for text-to-audio API
-text_to_audio_parser = (
-    reqparse.RequestParser()
-    .add_argument("message_id", type=str, required=False, location="json", help="Message ID")
-    .add_argument("voice", type=str, location="json", help="Voice to use for TTS")
-    .add_argument("text", type=str, location="json", help="Text to convert to audio")
-    .add_argument("streaming", type=bool, location="json", help="Enable streaming response")
-)
+register_schema_model(service_api_ns, TextToAudioPayload)
 
 
 @service_api_ns.route("/text-to-audio")
 class TextApi(Resource):
-    @service_api_ns.expect(text_to_audio_parser)
+    @service_api_ns.doc(
+        summary="Convert Text to Audio",
+        description="Convert text to speech.",
+        tags=["TTS"],
+        responses={
+            200: (
+                "Returns the generated audio. Generator responses are streamed by the service as `audio/mpeg`; "
+                "otherwise the provider output is returned directly."
+            ),
+            400: (
+                "- `app_unavailable` : App unavailable or misconfigured.\n"
+                "- `provider_not_initialize` : No valid model provider credentials found.\n"
+                "- `provider_quota_exceeded` : Model provider quota exhausted.\n"
+                "- `model_currently_not_support` : Current model does not support this operation.\n"
+                "- `completion_request_error` : Text-to-speech request failed."
+            ),
+            500: "`internal_server_error` : Internal server error.",
+        },
+    )
+    @expect_with_user(service_api_ns, TextToAudioPayload)
+    @binary_response(service_api_ns, "audio/mpeg")
     @service_api_ns.doc("text_to_audio")
     @service_api_ns.doc(description="Convert text to audio using text-to-speech")
     @service_api_ns.doc(
@@ -107,6 +163,7 @@ class TextApi(Resource):
             500: "Internal server error",
         }
     )
+    @service_api_ns.response(200, "Text successfully converted to audio")
     @validate_app_token(fetch_user_arg=FetchUserArg(fetch_from=WhereisUserArg.JSON))
     def post(self, app_model: App, end_user: EndUser):
         """Convert text to audio using text-to-speech.
@@ -114,11 +171,11 @@ class TextApi(Resource):
         Converts the provided text to audio using the specified voice.
         """
         try:
-            args = text_to_audio_parser.parse_args()
+            payload = TextToAudioPayload.model_validate(service_api_ns.payload or {})
 
-            message_id = args.get("message_id", None)
-            text = args.get("text", None)
-            voice = args.get("voice", None)
+            message_id = payload.message_id
+            text = payload.text
+            voice = payload.voice
             response = AudioService.transcript_tts(
                 app_model=app_model, text=text, voice=voice, end_user=end_user.external_user_id, message_id=message_id
             )

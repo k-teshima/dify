@@ -10,18 +10,41 @@ from controllers.common.errors import (
     TooManyFilesError,
     UnsupportedFileTypeError,
 )
+from controllers.common.schema import register_schema_models
 from controllers.service_api import service_api_ns
+from controllers.service_api.schema import multipart_file_params
 from controllers.service_api.wraps import FetchUserArg, WhereisUserArg, validate_app_token
 from extensions.ext_database import db
-from fields.file_fields import build_file_model
+from fields.file_fields import FileResponse
 from models import App, EndUser
 from services.file_service import FileService
+
+register_schema_models(service_api_ns, FileResponse)
 
 
 @service_api_ns.route("/files/upload")
 class FileApi(Resource):
+    @service_api_ns.doc(
+        summary="Upload File",
+        description=(
+            "Upload a file for use when sending messages, enabling multimodal understanding of images, "
+            "documents, audio, and video. Uploaded files are for use by the current end-user only."
+        ),
+        tags=["Files"],
+        responses={
+            201: "File uploaded successfully.",
+            400: (
+                "- `no_file_uploaded` : No file was provided in the request.\n"
+                "- `too_many_files` : Only one file is allowed per request.\n"
+                "- `filename_not_exists_error` : The uploaded file has no filename."
+            ),
+            413: "`file_too_large` : File size exceeded.",
+            415: "`unsupported_file_type` : File type not allowed.",
+        },
+    )
     @service_api_ns.doc("upload_file")
     @service_api_ns.doc(description="Upload a file for use in conversations")
+    @service_api_ns.doc(consumes=["multipart/form-data"], params=multipart_file_params(include_user=True))
     @service_api_ns.doc(
         responses={
             201: "File uploaded successfully",
@@ -31,8 +54,8 @@ class FileApi(Resource):
             415: "Unsupported file type",
         }
     )
-    @validate_app_token(fetch_user_arg=FetchUserArg(fetch_from=WhereisUserArg.FORM))
-    @service_api_ns.marshal_with(build_file_model(service_api_ns), code=HTTPStatus.CREATED)
+    @validate_app_token(fetch_user_arg=FetchUserArg(fetch_from=WhereisUserArg.FORM))  # type: ignore
+    @service_api_ns.response(HTTPStatus.CREATED, "File uploaded", service_api_ns.models[FileResponse.__name__])
     def post(self, app_model: App, end_user: EndUser):
         """Upload a file for use in conversations.
 
@@ -55,7 +78,7 @@ class FileApi(Resource):
         try:
             upload_file = FileService(db.engine).upload_file(
                 filename=file.filename,
-                content=file.read(),
+                content=file.stream.read(),
                 mimetype=file.mimetype,
                 user=end_user,
             )
@@ -64,4 +87,5 @@ class FileApi(Resource):
         except services.errors.file.UnsupportedFileTypeError:
             raise UnsupportedFileTypeError()
 
-        return upload_file, 201
+        response = FileResponse.model_validate(upload_file, from_attributes=True)
+        return response.model_dump(mode="json"), 201

@@ -1,9 +1,10 @@
 import json
 import logging
 import operator
-from typing import Any, cast
+from typing import Any, cast, override
 
 import httpx
+from sqlalchemy import update
 
 from configs import dify_config
 from core.rag.extractor.extractor_base import BaseExtractor
@@ -48,16 +49,25 @@ class NotionExtractor(BaseExtractor):
         if notion_access_token:
             self._notion_access_token = notion_access_token
         else:
-            self._notion_access_token = self._get_access_token(tenant_id, self._credential_id)
-            if not self._notion_access_token:
+            try:
+                self._notion_access_token = self._get_access_token(tenant_id, self._credential_id)
+            except Exception as e:
+                logger.warning(
+                    (
+                        "Failed to get Notion access token from datasource credentials: %s, "
+                        "falling back to environment variable NOTION_INTEGRATION_TOKEN"
+                    ),
+                    e,
+                )
                 integration_token = dify_config.NOTION_INTEGRATION_TOKEN
                 if integration_token is None:
                     raise ValueError(
                         "Must specify `integration_token` or set environment variable `NOTION_INTEGRATION_TOKEN`."
-                    )
+                    ) from e
 
                 self._notion_access_token = integration_token
 
+    @override
     def extract(self) -> list[Document]:
         self.update_last_edited_time(self._document_model)
 
@@ -338,9 +348,11 @@ class NotionExtractor(BaseExtractor):
         if data_source_info:
             data_source_info["last_edited_time"] = last_edited_time
 
-        db.session.query(DocumentModel).filter_by(id=document_model.id).update(
-            {DocumentModel.data_source_info: json.dumps(data_source_info)}
-        )  # type: ignore
+        db.session.execute(
+            update(DocumentModel)
+            .where(DocumentModel.id == document_model.id)
+            .values(data_source_info=json.dumps(data_source_info))
+        )
         db.session.commit()
 
     def get_notion_last_edited_time(self) -> str:

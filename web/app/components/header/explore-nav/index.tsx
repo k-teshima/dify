@@ -1,40 +1,37 @@
 'use client'
 
-import { useTranslation } from 'react-i18next'
-import Link from 'next/link'
-import { useSelectedLayoutSegment } from 'next/navigation'
+import { cn } from '@langgenius/dify-ui/cn'
 import {
   RiPlanetFill,
   RiPlanetLine,
 } from '@remixicon/react'
-import classNames from '@/utils/classnames'
-type ExploreNavProps = {
-  className?: string
-}
+import { useTranslation } from 'react-i18next'
+import Link from '@/next/link'
+import { usePathname, useSelectedLayoutSegment } from '@/next/navigation'
 
-const ExploreNav = ({
+export function ExploreNav({
   className,
-}: ExploreNavProps) => {
+}: {
+  className?: string
+}) {
   const { t } = useTranslation()
+  const pathname = usePathname()
   const selectedSegment = useSelectedLayoutSegment()
-  const activated = selectedSegment === 'explore'
+  const activated = pathname === '/' || selectedSegment === 'explore'
 
   return (
-    <Link href="/explore/apps" className={classNames(
-      className, 'group',
-      activated && 'bg-components-main-nav-nav-button-bg-active shadow-md',
-      activated ? 'text-components-main-nav-nav-button-text-active' : 'text-components-main-nav-nav-button-text hover:bg-components-main-nav-nav-button-bg-hover',
-    )}>
+    <Link
+      href="/"
+      className={cn(className, 'group', activated && 'bg-components-main-nav-nav-button-bg-active shadow-md', activated ? 'text-components-main-nav-nav-button-text-active' : 'text-components-main-nav-nav-button-text hover:bg-components-main-nav-nav-button-bg-hover')}
+    >
       {
         activated
-          ? <RiPlanetFill className='h-4 w-4' />
-          : <RiPlanetLine className='h-4 w-4' />
+          ? <RiPlanetFill className="size-4" />
+          : <RiPlanetLine className="size-4" />
       }
-      <div className='ml-2 max-[1024px]:hidden'>
-        {t('common.menus.explore')}
+      <div className="ml-2 max-[1120px]:hidden">
+        {t('menus.explore', { ns: 'common' })}
       </div>
     </Link>
   )
 }
-
-export default ExploreNav

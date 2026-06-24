@@ -1,20 +1,23 @@
-import { useCallback } from 'react'
+import type { SyncDraftCallback } from '@/app/components/workflow/hooks-store'
 import { produce } from 'immer'
+import { useCallback } from 'react'
 import { useStoreApi } from 'reactflow'
+import { useSerialAsyncCallback } from '@/app/components/workflow/hooks/use-serial-async-callback'
+import {
+  useNodesReadOnly,
+  useNodesReadOnlyByCanEdit,
+} from '@/app/components/workflow/hooks/use-workflow'
 import {
   useWorkflowStore,
 } from '@/app/components/workflow/store'
-import {
-  useNodesReadOnly,
-} from '@/app/components/workflow/hooks/use-workflow'
 import { API_PREFIX } from '@/config'
+import { postWithKeepalive } from '@/service/fetch'
 import { syncWorkflowDraft } from '@/service/workflow'
 import { usePipelineRefreshDraft } from '.'
 
-export const useNodesSyncDraft = () => {
+const useNodesSyncDraftBase = (getNodesReadOnly: () => boolean) => {
   const store = useStoreApi()
   const workflowStore = useWorkflowStore()
-  const { getNodesReadOnly } = useNodesReadOnly()
   const { handleRefreshWorkflowDraft } = usePipelineRefreshDraft()
 
   const getPostParams = useCallback(() => {
@@ -75,21 +78,13 @@ export const useNodesSyncDraft = () => {
       return
     const postParams = getPostParams()
 
-    if (postParams) {
-      navigator.sendBeacon(
-        `${API_PREFIX}${postParams.url}`,
-        JSON.stringify(postParams.params),
-      )
-    }
+    if (postParams)
+      postWithKeepalive(`${API_PREFIX}${postParams.url}`, postParams.params)
   }, [getPostParams, getNodesReadOnly])
 
-  const doSyncWorkflowDraft = useCallback(async (
+  const performSync = useCallback(async (
     notRefreshWhenSyncError?: boolean,
-    callback?: {
-      onSuccess?: () => void
-      onError?: () => void
-      onSettled?: () => void
-    },
+    callback?: SyncDraftCallback,
   ) => {
     if (getNodesReadOnly())
       return
@@ -121,8 +116,22 @@ export const useNodesSyncDraft = () => {
     }
   }, [getPostParams, getNodesReadOnly, workflowStore, handleRefreshWorkflowDraft])
 
+  const doSyncWorkflowDraft = useSerialAsyncCallback(performSync, getNodesReadOnly)
+
   return {
     doSyncWorkflowDraft,
     syncWorkflowDraftWhenPageClose,
   }
+}
+
+export const useNodesSyncDraftByCanEdit = (canEdit: boolean) => {
+  const { getNodesReadOnly } = useNodesReadOnlyByCanEdit(canEdit)
+
+  return useNodesSyncDraftBase(getNodesReadOnly)
+}
+
+export const useNodesSyncDraft = () => {
+  const { getNodesReadOnly } = useNodesReadOnly()
+
+  return useNodesSyncDraftBase(getNodesReadOnly)
 }

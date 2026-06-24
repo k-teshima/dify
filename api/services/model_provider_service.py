@@ -1,9 +1,13 @@
 import logging
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from models.account import Account
 
 from core.entities.model_entities import ModelWithProviderEntity, ProviderModelWithStatusEntity
-from core.model_runtime.entities.model_entities import ModelType, ParameterRule
-from core.model_runtime.model_providers.model_provider_factory import ModelProviderFactory
+from core.plugin.impl.model_runtime_factory import create_plugin_model_provider_factory, create_plugin_provider_manager
 from core.provider_manager import ProviderManager
+from graphon.model_runtime.entities.model_entities import ModelType, ParameterRule
 from models.provider import ProviderType
 from services.entities.model_provider_entities import (
     CustomConfigurationResponse,
@@ -25,8 +29,9 @@ class ModelProviderService:
     Model Provider Service
     """
 
-    def __init__(self):
-        self.provider_manager = ProviderManager()
+    @staticmethod
+    def _get_provider_manager(tenant_id: str) -> ProviderManager:
+        return create_plugin_provider_manager(tenant_id=tenant_id)
 
     def _get_provider_configuration(self, tenant_id: str, provider: str):
         """
@@ -43,7 +48,7 @@ class ModelProviderService:
             ProviderNotFoundError: If provider doesn't exist
         """
         # Get all provider configurations of the current workspace
-        provider_configurations = self.provider_manager.get_configurations(tenant_id)
+        provider_configurations = self._get_provider_manager(tenant_id).get_configurations(tenant_id)
         provider_configuration = provider_configurations.get(provider)
 
         if not provider_configuration:
@@ -60,18 +65,37 @@ class ModelProviderService:
         :return:
         """
         # Get all provider configurations of the current workspace
-        provider_configurations = self.provider_manager.get_configurations(tenant_id)
+        provider_configurations = self._get_provider_manager(tenant_id).get_configurations(tenant_id)
 
         provider_responses = []
         for provider_configuration in provider_configurations.values():
             if model_type:
-                model_type_entity = ModelType.value_of(model_type)
+                model_type_entity = ModelType(model_type)
                 if model_type_entity not in provider_configuration.provider.supported_model_types:
                     continue
 
             provider_config = provider_configuration.custom_configuration.provider
-            model_config = provider_configuration.custom_configuration.models
+            models = provider_configuration.custom_configuration.models
             can_added_models = provider_configuration.custom_configuration.can_added_models
+
+            # IMPORTANT: Never expose decrypted credentials in the provider list API.
+            # Sanitize custom model configurations by dropping the credentials payload.
+            sanitized_model_config = []
+            if models:
+                from core.entities.provider_entities import CustomModelConfiguration  # local import to avoid cycles
+
+                for model in models:
+                    sanitized_model_config.append(
+                        CustomModelConfiguration(
+                            model=model.model,
+                            model_type=model.model_type,
+                            credentials=None,  # strip secrets from list view
+                            current_credential_id=model.current_credential_id,
+                            current_credential_name=model.current_credential_name,
+                            available_model_credentials=model.available_model_credentials,
+                            unadded_to_model_list=model.unadded_to_model_list,
+                        )
+                    )
 
             provider_response = ProviderResponse(
                 tenant_id=tenant_id,
@@ -79,7 +103,7 @@ class ModelProviderService:
                 label=provider_configuration.provider.label,
                 description=provider_configuration.provider.description,
                 icon_small=provider_configuration.provider.icon_small,
-                icon_large=provider_configuration.provider.icon_large,
+                icon_small_dark=provider_configuration.provider.icon_small_dark,
                 background=provider_configuration.provider.background,
                 help=provider_configuration.provider.help,
                 supported_model_types=provider_configuration.provider.supported_model_types,
@@ -94,7 +118,7 @@ class ModelProviderService:
                     current_credential_id=getattr(provider_config, "current_credential_id", None),
                     current_credential_name=getattr(provider_config, "current_credential_name", None),
                     available_credentials=getattr(provider_config, "available_credentials", []),
-                    custom_models=model_config,
+                    custom_models=sanitized_model_config,
                     can_added_models=can_added_models,
                 ),
                 system_configuration=SystemConfigurationResponse(
@@ -119,7 +143,7 @@ class ModelProviderService:
         :return:
         """
         # Get all provider configurations of the current workspace
-        provider_configurations = self.provider_manager.get_configurations(tenant_id)
+        provider_configurations = self._get_provider_manager(tenant_id).get_configurations(tenant_id)
 
         # Get provider available models
         return [
@@ -127,7 +151,30 @@ class ModelProviderService:
             for model in provider_configurations.get_models(provider=provider)
         ]
 
-    def get_provider_credential(self, tenant_id: str, provider: str, credential_id: str | None = None) -> dict | None:
+    def get_provider_available_credentials(self, tenant_id: str, provider: str, user: "Account | None" = None):
+        return self._get_provider_manager(tenant_id).get_provider_available_credentials(
+            tenant_id=tenant_id,
+            provider_name=provider,
+            user=user,
+        )
+
+    def get_provider_model_available_credentials(
+        self,
+        tenant_id: str,
+        provider: str,
+        model_type: str,
+        model: str,
+    ):
+        return self._get_provider_manager(tenant_id).get_provider_model_available_credentials(
+            tenant_id=tenant_id,
+            provider_name=provider,
+            model_type=model_type,
+            model_name=model,
+        )
+
+    def get_provider_credential(
+        self, tenant_id: str, provider: str, credential_id: str | None = None
+    ) -> dict[str, Any] | None:
         """
         get provider credentials.
 
@@ -137,9 +184,9 @@ class ModelProviderService:
         :return:
         """
         provider_configuration = self._get_provider_configuration(tenant_id, provider)
-        return provider_configuration.get_provider_credential(credential_id=credential_id)  # type: ignore
+        return provider_configuration.get_provider_credential(credential_id=credential_id)
 
-    def validate_provider_credentials(self, tenant_id: str, provider: str, credentials: dict):
+    def validate_provider_credentials(self, tenant_id: str, provider: str, credentials: dict[str, Any]):
         """
         validate provider credentials before saving.
 
@@ -151,7 +198,7 @@ class ModelProviderService:
         provider_configuration.validate_provider_credentials(credentials)
 
     def create_provider_credential(
-        self, tenant_id: str, provider: str, credentials: dict, credential_name: str | None
+        self, tenant_id: str, provider: str, credentials: dict[str, Any], credential_name: str | None
     ) -> None:
         """
         Create and save new provider credentials.
@@ -169,7 +216,7 @@ class ModelProviderService:
         self,
         tenant_id: str,
         provider: str,
-        credentials: dict,
+        credentials: dict[str, Any],
         credential_id: str,
         credential_name: str | None,
     ) -> None:
@@ -213,7 +260,7 @@ class ModelProviderService:
 
     def get_model_credential(
         self, tenant_id: str, provider: str, model_type: str, model: str, credential_id: str | None
-    ) -> dict | None:
+    ) -> dict[str, Any] | None:
         """
         Retrieve model-specific credentials.
 
@@ -225,11 +272,13 @@ class ModelProviderService:
         :return:
         """
         provider_configuration = self._get_provider_configuration(tenant_id, provider)
-        return provider_configuration.get_custom_model_credential(  # type: ignore
-            model_type=ModelType.value_of(model_type), model=model, credential_id=credential_id
+        return provider_configuration.get_custom_model_credential(
+            model_type=ModelType(model_type), model=model, credential_id=credential_id
         )
 
-    def validate_model_credentials(self, tenant_id: str, provider: str, model_type: str, model: str, credentials: dict):
+    def validate_model_credentials(
+        self, tenant_id: str, provider: str, model_type: str, model: str, credentials: dict[str, Any]
+    ):
         """
         validate model credentials.
 
@@ -242,11 +291,17 @@ class ModelProviderService:
         """
         provider_configuration = self._get_provider_configuration(tenant_id, provider)
         provider_configuration.validate_custom_model_credentials(
-            model_type=ModelType.value_of(model_type), model=model, credentials=credentials
+            model_type=ModelType(model_type), model=model, credentials=credentials
         )
 
     def create_model_credential(
-        self, tenant_id: str, provider: str, model_type: str, model: str, credentials: dict, credential_name: str | None
+        self,
+        tenant_id: str,
+        provider: str,
+        model_type: str,
+        model: str,
+        credentials: dict[str, Any],
+        credential_name: str | None,
     ) -> None:
         """
         create and save model credentials.
@@ -261,7 +316,7 @@ class ModelProviderService:
         """
         provider_configuration = self._get_provider_configuration(tenant_id, provider)
         provider_configuration.create_custom_model_credential(
-            model_type=ModelType.value_of(model_type),
+            model_type=ModelType(model_type),
             model=model,
             credentials=credentials,
             credential_name=credential_name,
@@ -273,7 +328,7 @@ class ModelProviderService:
         provider: str,
         model_type: str,
         model: str,
-        credentials: dict,
+        credentials: dict[str, Any],
         credential_id: str,
         credential_name: str | None,
     ) -> None:
@@ -291,7 +346,7 @@ class ModelProviderService:
         """
         provider_configuration = self._get_provider_configuration(tenant_id, provider)
         provider_configuration.update_custom_model_credential(
-            model_type=ModelType.value_of(model_type),
+            model_type=ModelType(model_type),
             model=model,
             credentials=credentials,
             credential_id=credential_id,
@@ -311,7 +366,7 @@ class ModelProviderService:
         """
         provider_configuration = self._get_provider_configuration(tenant_id, provider)
         provider_configuration.delete_custom_model_credential(
-            model_type=ModelType.value_of(model_type), model=model, credential_id=credential_id
+            model_type=ModelType(model_type), model=model, credential_id=credential_id
         )
 
     def switch_active_custom_model_credential(
@@ -329,7 +384,7 @@ class ModelProviderService:
         """
         provider_configuration = self._get_provider_configuration(tenant_id, provider)
         provider_configuration.switch_custom_model_credential(
-            model_type=ModelType.value_of(model_type), model=model, credential_id=credential_id
+            model_type=ModelType(model_type), model=model, credential_id=credential_id
         )
 
     def add_model_credential_to_model_list(
@@ -347,7 +402,7 @@ class ModelProviderService:
         """
         provider_configuration = self._get_provider_configuration(tenant_id, provider)
         provider_configuration.add_model_credential_to_model(
-            model_type=ModelType.value_of(model_type), model=model, credential_id=credential_id
+            model_type=ModelType(model_type), model=model, credential_id=credential_id
         )
 
     def remove_model(self, tenant_id: str, provider: str, model_type: str, model: str):
@@ -361,7 +416,7 @@ class ModelProviderService:
         :return:
         """
         provider_configuration = self._get_provider_configuration(tenant_id, provider)
-        provider_configuration.delete_custom_model(model_type=ModelType.value_of(model_type), model=model)
+        provider_configuration.delete_custom_model(model_type=ModelType(model_type), model=model)
 
     def get_models_by_model_type(self, tenant_id: str, model_type: str) -> list[ProviderWithModelsResponse]:
         """
@@ -372,10 +427,10 @@ class ModelProviderService:
         :return:
         """
         # Get all provider configurations of the current workspace
-        provider_configurations = self.provider_manager.get_configurations(tenant_id)
+        provider_configurations = self._get_provider_manager(tenant_id).get_configurations(tenant_id)
 
         # Get provider available models
-        models = provider_configurations.get_models(model_type=ModelType.value_of(model_type), only_active=True)
+        models = provider_configurations.get_models(model_type=ModelType(model_type), only_active=True)
 
         # Group models by provider
         provider_models: dict[str, list[ModelWithProviderEntity]] = {}
@@ -402,7 +457,7 @@ class ModelProviderService:
                     provider=provider,
                     label=first_model.provider.label,
                     icon_small=first_model.provider.icon_small,
-                    icon_large=first_model.provider.icon_large,
+                    icon_small_dark=first_model.provider.icon_small_dark,
                     status=CustomConfigurationStatus.ACTIVE,
                     models=[
                         ProviderModelWithStatusEntity(
@@ -454,10 +509,12 @@ class ModelProviderService:
         :param model_type: model type
         :return:
         """
-        model_type_enum = ModelType.value_of(model_type)
+        model_type_enum = ModelType(model_type)
 
         try:
-            result = self.provider_manager.get_default_model(tenant_id=tenant_id, model_type=model_type_enum)
+            result = self._get_provider_manager(tenant_id).get_default_model(
+                tenant_id=tenant_id, model_type=model_type_enum
+            )
             return (
                 DefaultModelResponse(
                     model=result.model,
@@ -467,7 +524,6 @@ class ModelProviderService:
                         provider=result.provider.provider,
                         label=result.provider.label,
                         icon_small=result.provider.icon_small,
-                        icon_large=result.provider.icon_large,
                         supported_model_types=result.provider.supported_model_types,
                     ),
                 )
@@ -488,8 +544,8 @@ class ModelProviderService:
         :param model: model name
         :return:
         """
-        model_type_enum = ModelType.value_of(model_type)
-        self.provider_manager.update_default_model_record(
+        model_type_enum = ModelType(model_type)
+        self._get_provider_manager(tenant_id).update_default_model_record(
             tenant_id=tenant_id, model_type=model_type_enum, provider=provider, model=model
         )
 
@@ -501,11 +557,11 @@ class ModelProviderService:
 
         :param tenant_id: workspace id
         :param provider: provider name
-        :param icon_type: icon type (icon_small or icon_large)
+        :param icon_type: icon type (icon_small or icon_small_dark)
         :param lang: language (zh_Hans or en_US)
         :return:
         """
-        model_provider_factory = ModelProviderFactory(tenant_id)
+        model_provider_factory = create_plugin_model_provider_factory(tenant_id=tenant_id)
         byte_data, mime_type = model_provider_factory.get_provider_icon(provider, icon_type, lang)
 
         return byte_data, mime_type
@@ -538,7 +594,7 @@ class ModelProviderService:
         :return:
         """
         provider_configuration = self._get_provider_configuration(tenant_id, provider)
-        provider_configuration.enable_model(model=model, model_type=ModelType.value_of(model_type))
+        provider_configuration.enable_model(model=model, model_type=ModelType(model_type))
 
     def disable_model(self, tenant_id: str, provider: str, model: str, model_type: str):
         """
@@ -551,4 +607,4 @@ class ModelProviderService:
         :return:
         """
         provider_configuration = self._get_provider_configuration(tenant_id, provider)
-        provider_configuration.disable_model(model=model, model_type=ModelType.value_of(model_type))
+        provider_configuration.disable_model(model=model, model_type=ModelType(model_type))
